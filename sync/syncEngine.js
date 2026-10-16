@@ -25,6 +25,11 @@ export class SyncEngine {
    * Converts chunk-relative offsets to video timeline:
    *   t_video = video_start_time + offset * playback_rate
    * 
+   * Overlap replacement:
+   * If a newly received cue overlaps with existing cues from older epochs with the
+   * same source ("stt" or "captions"), the newer epoch replaces the older ones.
+   * Within the same epoch, is_final=false then is_final=true updates the same cue.
+   * 
    * @param {Object} result Result frame from backend WebSocket
    * @param {Object} ctx Context with video_start_time and playback_rate
    * @returns {{ status: string, reason?: string, cue?: Object }}
@@ -81,6 +86,23 @@ export class SyncEngine {
       at,
       text: cue.text
     });
+
+    // Overlap replacement rule:
+    // If older epoch cues overlap in time and share the same source, the newer epoch replaces them.
+    for (const [existingKey, existingCue] of this.store.entries()) {
+      if (
+        existingKey !== key &&
+        existingCue.source === cue.source &&
+        existingCue._epoch < cue._epoch &&
+        existingCue.start < cue.end &&
+        cue.start < existingCue.end
+      ) {
+        if (existingCue.first_shown_at !== null && cue.first_shown_at === null) {
+          cue.first_shown_at = existingCue.first_shown_at;
+        }
+        this.store.delete(existingKey);
+      }
+    }
 
     return { status: "accepted", cue };
   }
@@ -149,11 +171,11 @@ export class SyncEngine {
   /**
    * Retrieves all cues covering the specified video timestamp from cache.
    * 
-   * Overlapping cues behaviour:
-   * Returns all active cues covering time t (cue.start <= t && t <= cue.end),
-   * sorted chronologically by start ascending, then end ascending.
-   * This allows the overlay renderer to display multiple active lines or pick
-   * the latest specific cue without dropping concurrent subtitles.
+   * Time coverage: start <= t < end (end exclusive).
+   * Boundary rule: at t == end the cue is no longer visible; at the boundary
+   * between two adjacent cues, exactly one cue is active.
+   * 
+   * Sorted by start ascending, then end ascending.
    * 
    * @param {number} [t] Video seconds (defaults to current getVideoTime())
    * @returns {Array<Object>} Cues covering t, sorted by start time
@@ -162,7 +184,7 @@ export class SyncEngine {
     const queryTime = typeof t === "number" ? t : this.getVideoTime();
     const visible = [];
     for (const cue of this.store.values()) {
-      if (cue.start <= queryTime && queryTime <= cue.end) {
+      if (cue.start <= queryTime && queryTime < cue.end) {
         visible.push(cue);
       }
     }
@@ -171,13 +193,16 @@ export class SyncEngine {
 
   /**
    * Marks a cue as first shown on screen, recording first_shown_at once.
-   * Never overwrites first_shown_at once set.
+   * Uses video timeline seconds (videoTime parameter or getVideoTime()).
+   * Ignores subsequent calls once first_shown_at is set.
    * 
    * @param {Object} cue Cue to mark
+   * @param {number} [videoTime] Video timeline seconds
    */
-  markShown(cue) {
+  markShown(cue, videoTime) {
     if (cue && cue.first_shown_at === null) {
-      cue.first_shown_at = Number(this.getVideoTime().toFixed(2));
+      const vTime = typeof videoTime === "number" ? videoTime : this.getVideoTime();
+      cue.first_shown_at = Number(vTime.toFixed(2));
     }
   }
 

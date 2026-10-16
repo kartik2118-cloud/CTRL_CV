@@ -184,7 +184,7 @@ def check_seek_events(cues: list[dict], seek_events_input) -> dict:
         else:
             recovery_results.append({
                 "seek_index": seek_id,
-                "seek_time": seek_time,
+                "seek_time": ref_seek_time,
                 "to_video_time": to_v,
                 "first_shown_at": None,
                 "recovery_seconds": None,
