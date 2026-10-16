@@ -145,7 +145,7 @@ async def evaluate_all_clips(
             try:
                 res = await evaluate_clip(ref, url=url, chunk_ms=chunk_ms, fast=fast)
                 elapsed = time.time() - t0
-                print(f"[{idx:02d}/{total_clips:02d}] DONE {cid} ({len(res['cues'])} cues, {elapsed:.2f}s)", flush=True)
+                print(f"[{idx:02d}/{total_clips:02d}] FINISHED {cid} ({len(res['cues'])} cues, {elapsed:.2f}s)", flush=True)
                 return res
             except Exception as e:
                 print(f"[{idx:02d}/{total_clips:02d}] FAILED {cid}: {e}", flush=True)
@@ -225,6 +225,19 @@ def run_evaluation(
     )
     total_time = round(time.time() - start_eval_time, 2)
     print(f"\nEvaluated {len(clip_results)} clips in {total_time}s.")
+
+    # Backend mock signature check
+    has_mock_signature = False
+    for r in clip_results:
+        for c in r.get("cues", []):
+            if c.get("text") == "mock" or c.get("translation") == "mock" or c.get("mock") is True:
+                has_mock_signature = True
+                break
+        if has_mock_signature:
+            break
+
+    if has_mock_signature:
+        run_label = "SIMULATED"
 
     # Save predictions file
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -318,7 +331,7 @@ def run_evaluation(
             "Language": lang,
             "Clips": len(lang_acc),
             "Metric": metric_name,
-            "Score (%)": round(avg_acc_score, 2),
+            "Score (ratio)": round(avg_acc_score / 100.0, 3),
             "chrF": f"{chrf_val:.2f}" if chrf_val is not None else "N/A",
             "Latency Med/P90 (s)": f"{lat_res['median']:.2f} / {lat_res['p90']:.2f}",
             "Sync Gap Med/P90 (s)": f"{med_gap:.3f} / {p90_gap:.3f}",
@@ -339,7 +352,7 @@ def run_evaluation(
         "Language": "OVERALL",
         "Clips": len(clip_results),
         "Metric": "MIXED",
-        "Score (%)": round(overall_acc_err, 2),
+        "Score (ratio)": round(overall_acc_err / 100.0, 3),
         "chrF": f"{overall_chrf:.2f}",
         "Latency Med/P90 (s)": f"{overall_lat['median']:.2f} / {overall_lat['p90']:.2f}",
         "Sync Gap Med/P90 (s)": f"{overall_med_gap:.3f} / {overall_p90_gap:.3f}",
@@ -389,7 +402,11 @@ def main():
         fast_mode = False
 
     ws_url = args.ws_url or os.environ.get("CTRLCV_WS_URL") or "ws://127.0.0.1:8000/ws"
-    run_label = "MEASURED" if (args.measured or "localhost" not in ws_url and "127.0.0.1" not in ws_url) else "SIMULATED"
+    is_localhost = ("localhost" in ws_url or "127.0.0.1" in ws_url)
+    is_mock_label = (args.engine_label.lower() == "mock")
+    # Backend sirf tab REAL maano jab URL localhost/127.0.0.1 na ho aur mock signature na ho
+    is_real = (not is_localhost and not is_mock_label and args.measured)
+    run_label = "MEASURED" if is_real else "SIMULATED"
 
     run_evaluation(
         url=ws_url,

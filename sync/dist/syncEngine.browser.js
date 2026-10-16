@@ -408,6 +408,13 @@ class SyncBridge {
     this.isPaused = Boolean(this.video.paused);
     this._destroyed = false;
 
+    // Map storing chunk metadata: chunk_id -> { video_start_time, playback_rate }
+    this._chunkMetaMap = new Map();
+    this._maxChunkMeta = 1000;
+
+    // Archive of previous video sessions: [{ meta, cues }]
+    this._archive = [];
+
     // Event listeners
     this._onSeeking = () => {
       const t = Number((this.video.currentTime || 0).toFixed(2));
@@ -456,22 +463,67 @@ class SyncBridge {
   }
 
   /**
+   * Registers outgoing chunk metadata at send time.
+   * Stores video timeline position and playback rate for accurate conversion upon result arrival.
+   * Prunes oldest entries if map exceeds maximum capacity.
+   * 
+   * @param {number|string} chunk_id
+   * @param {Object} [meta]
+   * @param {number} [meta.video_start_time] Video seconds at start of chunk
+   * @param {number} [meta.playback_rate] Playback rate when chunk was captured
+   * @returns {Object} { video_start_time, playback_rate }
+   */
+  registerChunk(chunk_id, { video_start_time, playback_rate } = {}) {
+    if (this._destroyed) return null;
+    const meta = {
+      video_start_time: video_start_time !== undefined
+        ? video_start_time
+        : Number((this.video.currentTime || 0).toFixed(2)),
+      playback_rate: playback_rate !== undefined
+        ? playback_rate
+        : this.playbackRate
+    };
+
+    if (this._chunkMetaMap.size >= this._maxChunkMeta) {
+      const oldestKey = this._chunkMetaMap.keys().next().value;
+      this._chunkMetaMap.delete(oldestKey);
+    }
+
+    this._chunkMetaMap.set(chunk_id, meta);
+    return meta;
+  }
+
+  /**
    * Dispatches incoming WebSocket STT result into the engine.
-   * Automatically falls back to video.currentTime and video.playbackRate if not provided in ctx.
+   * Retrieves registered chunk context; drops with reason "unknown_chunk" if chunk_id was not registered.
+   * Optional overrideCtx allows manual parameter override.
    * 
    * @param {Object} result STT result frame matching docs/contract.md
-   * @param {Object} [ctx]
-   * @param {number} [ctx.video_start_time] Video seconds at start of chunk
-   * @param {number} [ctx.playback_rate] Playback rate during chunk
+   * @param {Object} [overrideCtx] Optional manual override { video_start_time, playback_rate }
    * @returns {Object} { status: "accepted" | "dropped", reason?: string, cue?: Object }
    */
-  handleResult(result, ctx = {}) {
+  handleResult(result, overrideCtx = null) {
     if (this._destroyed) return { status: "dropped", reason: "destroyed" };
-    const mergedCtx = {
-      video_start_time: ctx.video_start_time ?? Number((this.video.currentTime || 0).toFixed(2)),
-      playback_rate: ctx.playback_rate ?? this.playbackRate
-    };
-    const outcome = this.engine.onResult(result, mergedCtx);
+
+    let ctx;
+    if (overrideCtx && (overrideCtx.video_start_time !== undefined || overrideCtx.playback_rate !== undefined)) {
+      ctx = {
+        video_start_time: overrideCtx.video_start_time ?? Number((this.video.currentTime || 0).toFixed(2)),
+        playback_rate: overrideCtx.playback_rate ?? this.playbackRate
+      };
+    } else {
+      const registered = this._chunkMetaMap.get(result.chunk_id);
+      if (!registered) {
+        return { status: "dropped", reason: "unknown_chunk" };
+      }
+      ctx = {
+        video_start_time: registered.video_start_time,
+        playback_rate: registered.playback_rate
+      };
+      this._chunkMetaMap.delete(result.chunk_id);
+    }
+
+    const outcome = this.engine.onResult(result, ctx);
     if (outcome.status === "accepted") {
       this._tick();
     }
@@ -498,11 +550,32 @@ class SyncBridge {
 
   /**
    * Call when SPA client-side navigation occurs (e.g. YouTube yt-navigate-finish).
+   * Archives current video's exported cues before clearing engine state.
+   * 
+   * @param {Object} [meta] Metadata about the completed video (e.g. video_id, title)
    */
-  onNavigation() {
+  onNavigation(meta = {}) {
+    const currentCues = this.engine.exportLog();
+    if (currentCues.length > 0) {
+      this._archive.push({
+        meta: meta || {},
+        cues: currentCues
+      });
+    }
+
     this.engine.onNavigation();
-    this.onStatus("navigation", { epoch: this.engine.epoch });
+    this._chunkMetaMap.clear();
+    this.onStatus("navigation", { epoch: this.engine.epoch, meta });
     this._tick();
+  }
+
+  /**
+   * Returns archive of previous video cue logs.
+   * 
+   * @returns {Array<{ meta: Object, cues: Array<Object> }>}
+   */
+  exportArchive() {
+    return [...this._archive];
   }
 
   /**
