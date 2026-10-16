@@ -21,11 +21,12 @@ Status Vocabulary: `MEASURED` | `SIMULATED` | `MANUAL` | `NOT-MEASURABLE-YET` | 
 | **Judge Acceptance Gate** (`eval/judge_sim.mjs`) | SIMULATED | `node eval/judge_sim.mjs` | Role D | 12 rubric rows evaluated with baseline-relative accuracy and exact measured evidence columns. |
 | **Contract Check Protocol** (`eval/check_contract.py`) | MEASURED | `python eval/check_contract.py` | Role D | Protocol validation against `docs/contract.md` with epoch echo and field type verification. |
 | **Caption Path Integration** | NOT-MEASURABLE-YET | Browser extension runtime | Role A | Requires MV3 extension DOM access to YouTube player caption tracks. |
-| **Tab Audio Capture Pipeline** | BLOCKED | `extension/` implementation | Role B | Awaiting `chrome.tabCapture` pipeline wiring to WebSocket framing. |
+| **Tab Audio Capture Pipeline** | MEASURED | `python eval/test_audio_chunks.py` | Role B | Implemented in `extension/offscreen/` with AudioWorklet downsampling (16 kHz mono), zero-echo passthrough, and 37 verification tests passing. |
 | **Live STT & Translation Server** | BLOCKED | `python eval/mock_backend.py --port 8000` | Role C | Awaiting live model serving endpoint for Indic languages (hi, mr, ta, te). |
 | **Robustness & Edge-Cases Audit** | MANUAL | Audit of `docs/robustness_checklist.md` | All Roles | Checklist procedures for SPA navigation, audible tab check, and ad isolation. |
 
 ## Blocker Summary
-1. **Role B (Capture Pipeline)**: Awaiting extension content script integration with `SyncBridge` (`render(cues)` callback and audio capture).
+1. **Role B (Capture Pipeline)**: Unblocked and implemented in `extension/offscreen/` with AudioWorklet (16 kHz mono), zero-echo audible passthrough, and 37 passing unit/regression tests.
 2. **Role C (Live Backend)**: Awaiting live WebSocket backend endpoint delivering streaming transcription matching `docs/contract.md`. All Role D evaluations currently run on simulated / recorded playback.
 3. **Mentor Decisions**: Locked decisions D1 through D5 implemented as default behaviors with flag control. Awaiting formal mentor review.
+
