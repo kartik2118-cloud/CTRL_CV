@@ -38,3 +38,26 @@ with `sync/syncEngine.js` declared in the manifest's `web_accessible_resources`.
 2. **Schema & Safety**: Preserves the strict 8-field cue log schema without custom flags, maintaining complete compatibility with existing evaluators.
 3. **Log Implication**: Produces duplicate speech time intervals (`start`/`end`) across distinct `first_shown_at` timestamps in the exported cue log for re-played segments (flag `--reshow_entries=false` restores single-entry export).
 
+### SyncBridge Usage Snippet (Task F5 for Extension Integration)
+```javascript
+const bridge = new CtrlCVSync.SyncBridge({
+  video: document.querySelector('video'),
+  render: (activeCues) => {
+    overlayContainer.textContent = activeCues.map(c => c.translation || c.text).join('\n');
+  }
+});
+
+// 1. In outgoing WebSocket audio chunk headers:
+const chunkHeader = { type: 'chunk', epoch: bridge.getEpoch(), ... };
+
+// 2. On incoming WebSocket STT result frames:
+ws.onmessage = (event) => {
+  const result = JSON.parse(event.data);
+  if (result.type === 'result') bridge.handleResult(result);
+};
+
+// 3. YouTube lifecycle hooks:
+document.addEventListener('yt-navigate-finish', () => bridge.onNavigation());
+```
+
+

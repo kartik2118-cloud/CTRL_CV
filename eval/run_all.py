@@ -17,6 +17,7 @@ Features:
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,8 @@ if sys.stdout.encoding != "utf-8":
 
 EVAL_DIR = Path(__file__).resolve().parent
 ROOT_DIR = EVAL_DIR.parent
+import soundfile as sf
+
 RESULTS_DIR = EVAL_DIR / "results"
 DEFAULT_REFS_PATH = EVAL_DIR / "data" / "references.json"
 
@@ -40,6 +43,29 @@ from run_clip import stream_clip
 from score_accuracy import compute_metrics, normalize_text, ENGLISH_LANGS
 from score_translation import compute_chrf_score, evaluate_translations
 from score_latency import evaluate_latency
+
+
+def detect_speech_onset(audio_path: Path) -> float:
+    """Estimates acoustic speech onset (seconds) via frame energy thresholding."""
+    try:
+        audio, sr = sf.read(str(audio_path))
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
+        frame_len = int(sr * 0.02)  # 20ms frames
+        if len(audio) < frame_len:
+            return 0.0
+        frames = [audio[i:i + frame_len] for i in range(0, len(audio) - frame_len, frame_len)]
+        rms = [float(np.sqrt(np.mean(f**2))) for f in frames]
+        max_rms = max(rms) if rms else 0.0
+        if max_rms <= 0.0:
+            return 0.0
+        thresh = max_rms * 0.05
+        for idx, r in enumerate(rms):
+            if r > thresh:
+                return round(idx * 0.02, 3)
+    except Exception:
+        pass
+    return 0.0
 
 
 async def evaluate_clip(
@@ -61,6 +87,8 @@ async def evaluate_clip(
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+    speech_onset = detect_speech_onset(audio_path)
+
     # Stream clip over WebSocket
     cues = await stream_clip(
         clip_path=audio_path,
@@ -78,6 +106,10 @@ async def evaluate_clip(
     hyp_text = " ".join(hyp_text_parts).strip()
     hyp_translation = " ".join(hyp_trans_parts).strip()
 
+    sync_gap = None
+    if cues and "start" in cues[0]:
+        sync_gap = abs(float(cues[0]["start"]) - speech_onset)
+
     return {
         "id": cid,
         "language": lang_full,
@@ -86,7 +118,10 @@ async def evaluate_clip(
         "hypothesis": hyp_text,
         "translation": hyp_translation,
         "cues": cues,
-        "clip_duration": ref_item.get("duration", 0.0)
+        "speech_onset": speech_onset,
+        "sync_gap": sync_gap,
+        "clip_duration": ref_item.get("duration", 0.0),
+        "failed": False
     }
 
 
@@ -122,7 +157,10 @@ async def evaluate_all_clips(
                     "hypothesis": "",
                     "translation": "",
                     "cues": [],
-                    "clip_duration": ref.get("duration", 0.0)
+                    "speech_onset": 0.0,
+                    "sync_gap": None,
+                    "clip_duration": ref.get("duration", 0.0),
+                    "failed": True
                 }
 
     tasks = [worker(ref, i + 1) for i, ref in enumerate(refs)]
@@ -143,7 +181,8 @@ def run_evaluation(
     fast: bool = False,
     concurrency: int = 2,
     max_clips: int | None = None,
-    langs: str | None = None
+    langs: str | None = None,
+    run_label: str = "SIMULATED"
 ):
     """Main evaluation routine."""
     with open(references_path, "r", encoding="utf-8") as f:
@@ -162,7 +201,7 @@ def run_evaluation(
         refs_data = refs_data[:max_clips]
 
     print("=" * 70)
-    print(f"CtrlCV Benchmark Harness: Engine = '{engine_label}'")
+    print(f"CtrlCV Benchmark Harness: Engine = '{engine_label}' (Mode: {run_label})")
     print(f"Target WebSocket URL : {url}")
     print(f"References Path      : {references_path}")
     print(f"Streaming Mode       : {'Realtime' if not fast else 'Fast (unthrottled)'}")
@@ -196,7 +235,10 @@ def run_evaluation(
             "language": r["language"],
             "text": r["hypothesis"],
             "translation": r["translation"],
-            "cue_count": len(r["cues"])
+            "cue_count": len(r["cues"]),
+            "failed": r.get("failed", False),
+            "speech_onset": r.get("speech_onset", 0.0),
+            "sync_gap": r.get("sync_gap")
         }
         for r in clip_results
     ]
@@ -220,7 +262,9 @@ def run_evaluation(
             "wer": metrics["wer"] * 100.0,
             "cer": metrics["cer"] * 100.0,
             "primary_metric": metrics["primary_metric"].upper(),
-            "primary_score": metrics["primary_score"] * 100.0
+            "primary_score": metrics["primary_score"] * 100.0,
+            "failed": r.get("failed", False),
+            "sync_gap": r.get("sync_gap")
         })
     df_acc = pd.DataFrame(accuracy_records)
 
@@ -247,9 +291,11 @@ def run_evaluation(
         for _, row in trans_eval["lang_summary"].iterrows():
             chrf_by_lang[row["Language"]] = row["Corpus Score"]
 
-    # 3. Compute Latency Metrics per language and overall
+    # 3. Compute Metrics per language and overall
     summary_rows = []
     unique_langs = sorted(list(set(r["language"] for r in clip_results)))
+
+    all_sync_gaps = []
 
     for lang in unique_langs:
         lang_acc = df_acc[df_acc["language"] == lang]
@@ -258,35 +304,47 @@ def run_evaluation(
         avg_acc_score = lang_acc["wer"].mean() if is_en else lang_acc["cer"].mean()
 
         lang_cues = [c for r in clip_results if r["language"] == lang for c in r["cues"]]
-        lat_res = evaluate_latency(lang_cues)
+        lat_res = evaluate_latency(lang_cues) if lang_cues else {"median": 0.0, "p90": 0.0, "final_score_pct": 0.0}
         chrf_val = chrf_by_lang.get(lang, None)
+
+        lang_sync_gaps = [r["sync_gap"] for r in clip_results if r["language"] == lang and r.get("sync_gap") is not None]
+        all_sync_gaps.extend(lang_sync_gaps)
+        med_gap = float(np.median(lang_sync_gaps)) if lang_sync_gaps else 0.0
+        p90_gap = float(np.percentile(lang_sync_gaps, 90)) if lang_sync_gaps else 0.0
+
+        failed_count = sum(1 for r in clip_results if r["language"] == lang and r.get("failed", False))
 
         summary_rows.append({
             "Language": lang,
             "Clips": len(lang_acc),
             "Metric": metric_name,
-            "Acc Error (%)": round(avg_acc_score, 2),
+            "Score (%)": round(avg_acc_score, 2),
             "chrF": f"{chrf_val:.2f}" if chrf_val is not None else "N/A",
-            "Median Lag (s)": round(lat_res["median"], 2),
-            "P90 Lag (s)": round(lat_res["p90"], 2),
-            "Latency Score (%)": round(lat_res["final_score_pct"], 1)
+            "Latency Med/P90 (s)": f"{lat_res['median']:.2f} / {lat_res['p90']:.2f}",
+            "Sync Gap Med/P90 (s)": f"{med_gap:.3f} / {p90_gap:.3f}",
+            "Failed/Timeouts": failed_count,
+            "Label": run_label
         })
 
     # Overall Row
     overall_cues = all_cues
-    overall_lat = evaluate_latency(overall_cues)
+    overall_lat = evaluate_latency(overall_cues) if overall_cues else {"median": 0.0, "p90": 0.0, "final_score_pct": 0.0}
     overall_chrf = trans_eval.get("overall_chrf", 0.0) if trans_records else 0.0
     overall_acc_err = df_acc["primary_score"].mean() if not df_acc.empty else 0.0
+    overall_med_gap = float(np.median(all_sync_gaps)) if all_sync_gaps else 0.0
+    overall_p90_gap = float(np.percentile(all_sync_gaps, 90)) if all_sync_gaps else 0.0
+    overall_failed = sum(1 for r in clip_results if r.get("failed", False))
 
     summary_rows.append({
         "Language": "OVERALL",
         "Clips": len(clip_results),
         "Metric": "MIXED",
-        "Acc Error (%)": round(overall_acc_err, 2),
+        "Score (%)": round(overall_acc_err, 2),
         "chrF": f"{overall_chrf:.2f}",
-        "Median Lag (s)": round(overall_lat["median"], 2),
-        "P90 Lag (s)": round(overall_lat["p90"], 2),
-        "Latency Score (%)": round(overall_lat["final_score_pct"], 1)
+        "Latency Med/P90 (s)": f"{overall_lat['median']:.2f} / {overall_lat['p90']:.2f}",
+        "Sync Gap Med/P90 (s)": f"{overall_med_gap:.3f} / {overall_p90_gap:.3f}",
+        "Failed/Timeouts": overall_failed,
+        "Label": run_label
     })
 
     summary_df = pd.DataFrame(summary_rows)
@@ -294,17 +352,23 @@ def run_evaluation(
     summary_df.to_csv(summary_csv, index=False, encoding="utf-8")
 
     # Display clean formatted table
-    print("\n" + "=" * 80)
-    print(f"CtrlCV Benchmark Summary Table: Engine = '{engine_label}'")
-    print("=" * 80)
+    print("\n" + "=" * 105)
+    print(f"FLEURS Benchmark Results Table: Engine = '{engine_label}' (Mode: {run_label})")
+    print("=" * 105)
     print(summary_df.to_string(index=False))
-    print("=" * 80)
+    print("=" * 105)
+    print("NOTE: FLEURS saaf speech hai, noisy/Hinglish pe numbers alag honge.")
+    print("Backend Sync Gap Analysis:")
+    print(f"  Acoustic speech onset vs cue.start median gap: {overall_med_gap:.3f}s, P90: {overall_p90_gap:.3f}s.")
+    print("  Agar backend ka cue.start chunk boundary pe snap hai (speech onset se door):")
+    print("  RECOMMENDATION: Backend mein VAD (Voice Activity Detection) ya word timestamps enable karein")
+    print("  taaki cue.start audio chunk boundary (0.0s) ke bajaye acoustic speech onset se align ho.\n")
     print(f"Full report exported to: {summary_csv}\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description="CtrlCV Batch Evaluation Runner (eval/run_all.py)")
-    parser.add_argument("--url", type=str, default="ws://127.0.0.1:8000/ws", help="WebSocket server URL")
+    parser.add_argument("--url", "--ws_url", dest="ws_url", type=str, default=None, help="WebSocket server URL")
     parser.add_argument("--engine_label", type=str, default="mock", help="Engine label (e.g., mock, whisper)")
     parser.add_argument("--references", type=str, default=str(DEFAULT_REFS_PATH), help="Path to references.json")
     parser.add_argument("--chunk_ms", type=int, default=1000, help="Chunk duration in ms")
@@ -313,6 +377,7 @@ def main():
     parser.add_argument("--fast", action="store_true", help="Stream fast without realtime sleep")
     parser.add_argument("--max_clips", type=int, default=None, help="Limit total number of clips")
     parser.add_argument("--langs", type=str, default=None, help="Filter languages (comma-separated, e.g. 'hi,mr')")
+    parser.add_argument("--measured", action="store_true", help="Mark run as MEASURED (for real backend)")
     args = parser.parse_args()
 
     # Determine fast streaming vs realtime
@@ -321,19 +386,21 @@ def main():
     elif args.realtime:
         fast_mode = False
     else:
-        # Default: if neither flag passed, default to safe mode (realtime if requested or fast if batch)
-        # Per prompt: "Add --realtime and --concurrency N (default 2). Default must stay safe for APIs."
         fast_mode = False
 
+    ws_url = args.ws_url or os.environ.get("CTRLCV_WS_URL") or "ws://127.0.0.1:8000/ws"
+    run_label = "MEASURED" if (args.measured or "localhost" not in ws_url and "127.0.0.1" not in ws_url) else "SIMULATED"
+
     run_evaluation(
-        url=args.url,
+        url=ws_url,
         engine_label=args.engine_label,
         references_path=Path(args.references),
         chunk_ms=args.chunk_ms,
         fast=fast_mode,
         concurrency=args.concurrency,
         max_clips=args.max_clips,
-        langs=args.langs
+        langs=args.langs,
+        run_label=run_label
     )
 
 

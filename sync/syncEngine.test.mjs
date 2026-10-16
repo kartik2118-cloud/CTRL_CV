@@ -6,9 +6,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 import { SyncEngine } from "./syncEngine.js";
+import { SyncBridge } from "./syncBridge.js";
+import { buildBrowserBundle } from "./build_browser.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,9 +22,22 @@ function getPythonCommand() {
   const venvPythonWin = path.join(ROOT_DIR, "eval", "venv", "Scripts", "python.exe");
   const venvPythonUnix = path.join(ROOT_DIR, "eval", "venv", "bin", "python");
 
-  if (fs.existsSync(venvPythonWin)) return venvPythonWin;
-  if (fs.existsSync(venvPythonUnix)) return venvPythonUnix;
-  return process.platform === "win32" ? "python" : "python3";
+  const candidates = [];
+  if (fs.existsSync(venvPythonWin)) candidates.push(venvPythonWin);
+  if (fs.existsSync(venvPythonUnix)) candidates.push(venvPythonUnix);
+  candidates.push(process.platform === "win32" ? "python" : "python3");
+
+  for (const cmd of candidates) {
+    try {
+      const res = execFileSync(cmd, ["-c", "import sys; print('ok')"], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: 3000
+      });
+      if (res && res.trim() === "ok") return cmd;
+    } catch (_) {}
+  }
+  return null;
 }
 
 test("1. Stale epoch result is dropped", () => {
@@ -564,6 +580,10 @@ test("14. markShown ignores subsequent calls (first_shown_at never overwritten)"
 
 test("15. Real FLEURS clip cue log validation using eval/validate_log.py", (t) => {
   const pythonCmd = getPythonCommand();
+  if (!pythonCmd) {
+    t.skip("Python venv or jsonschema module not available, gracefully skipping schema validation test.");
+    return;
+  }
   const validatorScript = path.join(ROOT_DIR, "eval", "validate_log.py");
 
   // Preference order: sample committed file, then results/cue_log.json
@@ -846,8 +866,12 @@ test("21. D1 (c): --reshow_entries off ({ reshow_entries: false }) preserves leg
   assert.equal(legacyExport[0].first_shown_at, 12.5);
 });
 
-test("22. D1 (d): exportLog output with re-show entries PASSES eval/validate_log.py", () => {
+test("22. D1 (d): exportLog output with re-show entries PASSES eval/validate_log.py", (t) => {
   const pythonCmd = getPythonCommand();
+  if (!pythonCmd) {
+    t.skip("Python venv or jsonschema module not available, gracefully skipping schema validation test.");
+    return;
+  }
   const validatorScript = path.join(ROOT_DIR, "eval", "validate_log.py");
 
   const engine = new SyncEngine({ getVideoTime: () => 10.0 });
@@ -910,7 +934,7 @@ test("23. D1 (e): Without seek (accuracy path: continuous playback), duplicates 
   assert.equal(exported.length, 3, "Exactly 3 cues exported for 3 sequential chunks with no seeks");
 });
 
-test("24. D2: Code-mixed sidecar: {'lang':'hi','langs':['hi','en']} -> log lang 'hi', sidecar ['hi','en'], validate_log pass", () => {
+test("24. D2: Code-mixed sidecar: {'lang':'hi','langs':['hi','en']} -> log lang 'hi', sidecar ['hi','en'], validate_log pass", (t) => {
   const pythonCmd = getPythonCommand();
   const validatorScript = path.join(ROOT_DIR, "eval", "validate_log.py");
 
@@ -946,6 +970,11 @@ test("24. D2: Code-mixed sidecar: {'lang':'hi','langs':['hi','en']} -> log lang 
   fs.writeFileSync(testLogPath, JSON.stringify(exported, null, 2), "utf-8");
   fs.writeFileSync(testSidecarPath, JSON.stringify(sidecar, null, 2), "utf-8");
 
+  if (!pythonCmd) {
+    t.skip("Python venv or jsonschema not available, skipping validate_log.py invocation.");
+    return;
+  }
+
   const valOutput = execFileSync(pythonCmd, [validatorScript, testLogPath], {
     encoding: "utf-8",
     cwd: ROOT_DIR
@@ -953,4 +982,244 @@ test("24. D2: Code-mixed sidecar: {'lang':'hi','langs':['hi','en']} -> log lang 
   console.log(`[Code-Mixed Log Validation]:\n${valOutput.trim()}`);
   assert.ok(valOutput.includes("PASS"), "Code-mixed cue log must pass validate_log.py");
 });
+
+// Helper for Fake HTML5 Video Element
+class FakeVideo extends EventTarget {
+  constructor(currentTime = 0.0, playbackRate = 1.0) {
+    super();
+    this.currentTime = currentTime;
+    this.playbackRate = playbackRate;
+    this.paused = false;
+  }
+  seek(newTime) {
+    this.currentTime = newTime;
+    this.dispatchEvent(new Event("seeking"));
+  }
+  setRate(newRate) {
+    this.playbackRate = newRate;
+    this.dispatchEvent(new Event("ratechange"));
+  }
+  pause() {
+    this.paused = true;
+    this.dispatchEvent(new Event("pause"));
+  }
+  play() {
+    this.paused = false;
+    this.dispatchEvent(new Event("play"));
+  }
+}
+
+test("25. F4: Browser bundle loads in node:vm as a classic script and executes without ESM syntax errors", () => {
+  const bundlePath = buildBrowserBundle();
+  assert.ok(fs.existsSync(bundlePath), "Browser bundle file must exist");
+
+  const bundleCode = fs.readFileSync(bundlePath, "utf-8");
+  assert.ok(!/^\s*import\s+/m.test(bundleCode), "Bundle must not contain import statements");
+  assert.ok(!/^\s*export\s+/m.test(bundleCode), "Bundle must not contain export statements");
+
+  const sandbox = {
+    console,
+    Date,
+    Map,
+    Array,
+    Number,
+    Boolean,
+    EventTarget,
+    Event,
+    setInterval,
+    clearInterval
+  };
+  sandbox.globalThis = sandbox;
+
+  const context = vm.createContext(sandbox);
+  vm.runInContext(bundleCode, context);
+
+  assert.ok(context.CtrlCVSync, "globalThis.CtrlCVSync must be defined");
+  assert.equal(typeof context.CtrlCVSync.SyncEngine, "function", "CtrlCVSync.SyncEngine must be a constructor");
+  assert.equal(typeof context.CtrlCVSync.SyncBridge, "function", "CtrlCVSync.SyncBridge must be a constructor");
+
+  // Instantiate and verify basic workflow in classic VM
+  const engine = new context.CtrlCVSync.SyncEngine({ getVideoTime: () => 10.0 });
+  const { cue } = engine.onResult({
+    chunk_id: 2501,
+    epoch: 1,
+    is_final: true,
+    start_offset: 1.0,
+    end_offset: 3.0,
+    lang: "hi",
+    text: "ब्राउज़र बंडल टेस्ट"
+  }, { video_start_time: 10.0, playback_rate: 1.0 });
+
+  engine.markShown(cue, 11.0);
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 1);
+  assert.equal(exported[0].text, "ब्राउज़र बंडल टेस्ट");
+  assert.equal(exported[0].first_shown_at, 11.0);
+});
+
+test("26. F5 (a): SyncBridge: seek-back renders cached cue within 1.0s (0s recovery)", async () => {
+  const video = new FakeVideo(0.0);
+  let renderedCues = [];
+  const bridge = new SyncBridge({
+    video,
+    render: (cues) => { renderedCues = cues; },
+    tickMs: 10
+  });
+
+  // Feed initial cue at 10.0s - 15.0s
+  bridge.handleResult({
+    chunk_id: 2601,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 5.0,
+    lang: "hi",
+    text: "ब्रिज सीक टेस्ट"
+  }, { video_start_time: 10.0, playback_rate: 1.0 });
+
+  // Play to 12.0s
+  video.currentTime = 12.0;
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(renderedCues.length, 1);
+  assert.equal(renderedCues[0].text, "ब्रिज सीक टेस्ट");
+
+  // Seek forward to 60.0s
+  video.seek(60.0);
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(renderedCues.length, 0);
+
+  // Seek back to 13.0s -> Instant 0s recovery
+  video.seek(13.0);
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(renderedCues.length, 1, "Cached cue must be immediately visible upon seek back");
+  assert.equal(renderedCues[0].text, "ब्रिज सीक टेस्ट");
+
+  bridge.destroy();
+});
+
+test("27. F5 (b): SyncBridge: render callback never receives stale cue after seek", async () => {
+  const video = new FakeVideo(10.0);
+  let renderedCues = [];
+  const bridge = new SyncBridge({
+    video,
+    render: (cues) => { renderedCues = cues; },
+    tickMs: 10
+  });
+
+  // Seek to 120.0s (epoch 1 -> 2)
+  video.seek(120.0);
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(renderedCues.length, 0);
+
+  // Stale chunk arrives with pre-seek epoch 1
+  const outcome = bridge.handleResult({
+    chunk_id: 2701,
+    epoch: 1,
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 3.0,
+    lang: "hi",
+    text: "स्टेल ब्रिज चंक"
+  }, { video_start_time: 10.0, playback_rate: 1.0 });
+
+  assert.equal(outcome.status, "dropped");
+  assert.equal(outcome.reason, "stale_epoch");
+  assert.equal(renderedCues.length, 0, "Render callback must NEVER receive stale cues");
+
+  bridge.destroy();
+});
+
+test("28. F5 (c): SyncBridge: playback_rate = 1.5 correctly converts t_video", () => {
+  const video = new FakeVideo(60.0, 1.5);
+  const bridge = new SyncBridge({
+    video,
+    render: () => {},
+    tickMs: 50
+  });
+
+  const outcome = bridge.handleResult({
+    chunk_id: 2801,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 2.0,
+    end_offset: 4.0,
+    lang: "hi",
+    text: "गति 1.5 टेस्ट"
+  }, { video_start_time: 60.0 });
+
+  assert.equal(outcome.status, "accepted");
+  // 60.0 + 2.0 * 1.5 = 63.0
+  // 60.0 + 4.0 * 1.5 = 66.0
+  assert.equal(outcome.cue.start, 63.0);
+  assert.equal(outcome.cue.end, 66.0);
+
+  bridge.destroy();
+});
+
+test("29. F5 (d): SyncBridge: destroy() clears interval and unbinds listeners", async () => {
+  const video = new FakeVideo(0.0);
+  let renderCallCount = 0;
+  const bridge = new SyncBridge({
+    video,
+    render: () => { renderCallCount++; },
+    tickMs: 10
+  });
+
+  await new Promise(r => setTimeout(r, 25));
+  assert.ok(renderCallCount > 0);
+
+  bridge.destroy();
+  const countAtDestroy = renderCallCount;
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(renderCallCount, countAtDestroy, "Render loop must halt immediately after destroy()");
+
+  // Seeking after destroy does not throw
+  assert.doesNotThrow(() => {
+    video.seek(20.0);
+  });
+});
+
+test("30. F5 (e): SyncBridge: markShown called on visible cues exactly once per epoch", async () => {
+  const video = new FakeVideo(12.0);
+  const bridge = new SyncBridge({
+    video,
+    render: () => {},
+    tickMs: 10
+  });
+
+  const { cue } = bridge.handleResult({
+    chunk_id: 3001,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 5.0,
+    lang: "hi",
+    text: "री-शो ब्रिज टेस्ट"
+  }, { video_start_time: 10.0, playback_rate: 1.0 });
+
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(cue._shows.length, 1);
+  assert.equal(cue._shows[0].epoch, 1);
+  assert.equal(cue._shows[0].at, 12.0);
+
+  // Additional ticks in same epoch 1 do not append duplicate shows
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(cue._shows.length, 1);
+
+  // Seek back to 11.0s (epoch 1 -> 2)
+  video.seek(11.0);
+  await new Promise(r => setTimeout(r, 25));
+  assert.equal(cue._shows.length, 2, "Re-showing in new epoch must record second show");
+  assert.equal(cue._shows[1].epoch, 2);
+  assert.equal(cue._shows[1].at, 11.0);
+
+  // Export produces 2 entries per D1 (sorted by start ascending, then first_shown_at ascending: 11.0, then 12.0)
+  const exported = bridge.exportLog();
+  assert.equal(exported.length, 2);
+  assert.equal(exported[0].first_shown_at, 11.0);
+  assert.equal(exported[1].first_shown_at, 12.0);
+
+  bridge.destroy();
+});
+
 
