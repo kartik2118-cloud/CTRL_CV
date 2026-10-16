@@ -148,7 +148,10 @@ export class SyncBridge {
         video_start_time: registered.video_start_time,
         playback_rate: registered.playback_rate
       };
-      this._chunkMetaMap.delete(result.chunk_id);
+      // Keep chunk registered if partial (is_final === false) so final result can resolve ctx
+      if (result.is_final !== false) {
+        this._chunkMetaMap.delete(result.chunk_id);
+      }
     }
 
     const outcome = this.engine.onResult(result, ctx);
@@ -156,6 +159,14 @@ export class SyncBridge {
       this._tick();
     }
     return outcome;
+  }
+
+  /**
+   * Returns count of cues excluded from export because they were never finalized.
+   * @returns {number}
+   */
+  getUnfinalizedCount() {
+    return this.engine.getUnfinalizedCount();
   }
 
   /**

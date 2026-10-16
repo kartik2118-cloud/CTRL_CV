@@ -59,6 +59,17 @@ async def handle_contract_connection(websocket: WebSocket):
         if chunk_delay > 0:
             await asyncio.sleep(chunk_delay)
 
+        if CONFIG.get("inject_429_at") and chunk_id == CONFIG["inject_429_at"]:
+            err_frame = {
+                "type": "error",
+                "code": 429,
+                "detail": "Whisper STT API error (HTTP 429): Rate limit reached for model"
+            }
+            async with send_lock:
+                await websocket.send_json(err_frame)
+            print(f"[Backend] Injected HTTP 429 error for chunk {chunk_id}")
+            return
+
         result_frame = {
             "type": "result",
             "chunk_id": chunk_id,
@@ -143,6 +154,7 @@ def main():
     parser.add_argument("--end_offset", type=float, default=0.1, help="Speech end offset relative to chunk start (default: 0.1)")
     parser.add_argument("--text", type=str, default="mock", help="Mock recognized text (default: 'mock')")
     parser.add_argument("--translation", type=str, default="mock", help="Mock translation text (default: 'mock')")
+    parser.add_argument("--inject_429_at", type=int, default=0, help="Inject HTTP 429 rate limit error frame at specified chunk_id (default: 0)")
     args = parser.parse_args()
 
     CONFIG["delay"] = args.delay
@@ -150,6 +162,7 @@ def main():
     CONFIG["end_offset"] = args.end_offset
     CONFIG["text"] = args.text
     CONFIG["translation"] = args.translation
+    CONFIG["inject_429_at"] = args.inject_429_at
 
     print(f"Starting Mock Backend on {args.host}:{args.port} with delay={args.delay}s, slow_first={args.slow_first}, end_offset={args.end_offset}s...")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

@@ -1370,5 +1370,163 @@ test("34. F5 (i): SyncBridge: registerChunk map size is capped and oldest entrie
   bridge.destroy();
 });
 
+test("35. G3.1 (a,b,c): Partial shown -> first_shown_at null & revisions 1; Final shown -> first_shown_at final time & revisions 2; unfinalized excluded from exportLog", () => {
+  let currentTime = 10.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  // (a) Partial hypothesis arrives in epoch 1
+  currentTime = 10.2;
+  const partialRes = {
+    chunk_id: 101,
+    epoch: 1,
+    is_final: false,
+    start_offset: 0.0,
+    end_offset: 2.0,
+    lang: "hi",
+    text: "आज हम पनीर"
+  };
+  const { cue: partialCue } = engine.onResult(partialRes, ctx);
+
+  // Partial is displayed on screen
+  engine.markShown(partialCue, 10.3);
+
+  // Assert (a): partial shown -> first_shown_at remains null, revisions length is 1
+  assert.equal(partialCue.first_shown_at, null, "first_shown_at must remain null while cue is partial");
+  assert.equal(partialCue.revisions.length, 1);
+  assert.deepEqual(partialCue.revisions[0], { at: 10.2, text: "आज हम पनीर" });
+
+  // If exportLog is called now, partial cue must NOT be exported
+  const exportBeforeFinal = engine.exportLog();
+  assert.equal(exportBeforeFinal.length, 0, "Unfinalized cue must not be exported");
+  assert.equal(engine.getUnfinalizedCount(), 1, "Unfinalized count must be reported as 1");
+
+  // (b) Final hypothesis arrives for the same chunk_id in epoch 1
+  currentTime = 11.0;
+  const finalRes = {
+    chunk_id: 101,
+    epoch: 1,
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 2.0,
+    lang: "hi",
+    text: "आज हम पनीर टिक्का बनाएंगे",
+    translation: "Today we will make paneer tikka"
+  };
+  const { cue: finalCue } = engine.onResult(finalRes, ctx);
+
+  // Assert (c): partial -> final for the same chunk_id in same epoch is strictly 1 single cue
+  assert.equal(engine.store.size, 1);
+  assert.equal(finalCue, partialCue);
+
+  // Final is displayed on screen at video time 11.2s
+  currentTime = 11.2;
+  engine.markShown(finalCue, 11.2);
+
+  // Assert (b): final shown -> first_shown_at is set to the time final was displayed (11.2), revisions length is 2
+  assert.equal(finalCue.first_shown_at, 11.2);
+  assert.equal(finalCue.revisions.length, 2);
+  assert.deepEqual(finalCue.revisions[1], { at: 11.0, text: "आज हम पनीर टिक्का बनाएंगे" });
+
+  // exportLog now exports the finalized cue
+  const exportAfterFinal = engine.exportLog();
+  assert.equal(exportAfterFinal.length, 1);
+  assert.equal(exportAfterFinal[0].first_shown_at, 11.2);
+  assert.equal(exportAfterFinal[0].text, "आज हम पनीर टिक्का बनाएंगे");
+  assert.equal(engine.getUnfinalizedCount(), 0);
+});
+
+test("36. G3.1 (d): Re-show entry (seek-back) creates distinct entry with first_shown_at at seek-back time", () => {
+  let currentTime = 10.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  // Cue 1 received & displayed in epoch 1 at video time 10.5
+  const { cue } = engine.onResult({
+    chunk_id: 201,
+    epoch: 1,
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 4.0,
+    lang: "hi",
+    text: "नमस्ते दुनिया"
+  }, ctx);
+  engine.markShown(cue, 10.5);
+  assert.equal(cue.first_shown_at, 10.5);
+
+  // User plays forward to 25.0s, then seeks back to 11.0s (epoch advances to 2)
+  engine.onSeek(25.0, 11.0);
+  assert.equal(engine.epoch, 2);
+
+  // At seek-back time 11.0s, the cached cue is visible again and re-shown in epoch 2
+  currentTime = 11.0;
+  const visible = engine.getVisibleCues(11.0);
+  assert.equal(visible.length, 1);
+  engine.markShown(visible[0], 11.0);
+
+  // exportLog() with reshow_entries: true emits 2 entries:
+  // 1st entry: first_shown_at = 10.5 (initial show in epoch 1)
+  // 2nd entry: first_shown_at = 11.0 (seek-back show in epoch 2)
+  const log = engine.exportLog({ reshow_entries: true });
+  assert.equal(log.length, 2);
+  assert.equal(log[0].first_shown_at, 10.5);
+  assert.equal(log[1].first_shown_at, 11.0);
+});
+
+test("37. G3.2: Playback rates (0.5, 0.75, 1.0, 1.5, 2.0) conversion: t_video = video_start_time + offset * playback_rate", () => {
+  const rates = [0.5, 0.75, 1.0, 1.5, 2.0];
+  const vStart = 40.0;
+  const sOffset = 1.0;
+  const eOffset = 3.0;
+
+  for (const rate of rates) {
+    const engine = new SyncEngine({ getVideoTime: () => vStart });
+    const ctx = { video_start_time: vStart, playback_rate: rate };
+
+    const { cue } = engine.onResult({
+      chunk_id: 301,
+      epoch: 1,
+      is_final: true,
+      start_offset: sOffset,
+      end_offset: eOffset,
+      lang: "hi",
+      text: `Speed test at rate ${rate}`
+    }, ctx);
+
+    const expectedStart = Number((vStart + sOffset * rate).toFixed(2));
+    const expectedEnd = Number((vStart + eOffset * rate).toFixed(2));
+
+    assert.equal(cue.start, expectedStart, `Start mismatch at rate ${rate}`);
+    assert.equal(cue.end, expectedEnd, `End mismatch at rate ${rate}`);
+  }
+
+  // Also verify via SyncBridge with registerChunk across all 5 speeds
+  for (const rate of rates) {
+    const video = new FakeVideo(vStart);
+    video.playbackRate = rate;
+    const bridge = new SyncBridge({ video, render: () => {}, tickMs: 50 });
+
+    bridge.registerChunk(401, { video_start_time: vStart, playback_rate: rate });
+
+    const outcome = bridge.handleResult({
+      chunk_id: 401,
+      epoch: bridge.getEpoch(),
+      is_final: true,
+      start_offset: sOffset,
+      end_offset: eOffset,
+      lang: "hi",
+      text: `Bridge rate ${rate}`
+    });
+
+    assert.equal(outcome.status, "accepted");
+    const expectedStart = Number((vStart + sOffset * rate).toFixed(2));
+    const expectedEnd = Number((vStart + eOffset * rate).toFixed(2));
+    assert.equal(outcome.cue.start, expectedStart);
+    assert.equal(outcome.cue.end, expectedEnd);
+
+    bridge.destroy();
+  }
+});
+
 
 

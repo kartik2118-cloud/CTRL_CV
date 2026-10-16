@@ -365,6 +365,8 @@ async def stream_clip(
             print(f"[Client SUMMARY] Stale results dropped count: {stale_dropped_count} (chunks: {stale_dropped_chunk_ids})")
 
     meta_info = {
+        "chunks_sent": total_chunks,
+        "results_received": len(cues),
         "rate_limited": rate_limited,
         "rate_limit_count": rate_limit_count,
         "stale_dropped_count": stale_dropped_count,

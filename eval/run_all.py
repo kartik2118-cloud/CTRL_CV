@@ -136,6 +136,11 @@ async def evaluate_clip(
     if cues and "start" in cues[0]:
         sync_gap = abs(float(cues[0]["start"]) - speech_onset)
 
+    chunks_sent = meta.get("chunks_sent", 0)
+    results_received = meta.get("results_received", len(cues))
+    is_rate_limited = meta.get("rate_limited", False)
+    rate_limit_count = meta.get("rate_limit_count", 0)
+
     return {
         "id": cid,
         "language": lang_full,
@@ -148,8 +153,11 @@ async def evaluate_clip(
         "sync_gap": sync_gap,
         "clip_duration": ref_item.get("duration", 0.0),
         "failed": False,
-        "rate_limited": meta.get("rate_limited", False),
-        "rate_limit_count": meta.get("rate_limit_count", 0)
+        "chunks_sent": chunks_sent,
+        "results_received": results_received,
+        "coverage": f"{results_received}/{chunks_sent}" if chunks_sent > 0 else "0/0",
+        "rate_limited": is_rate_limited,
+        "rate_limit_count": rate_limit_count
     }
 
 
@@ -300,6 +308,8 @@ def run_evaluation(
             "text": r["hypothesis"],
             "translation": r["translation"],
             "cue_count": len(r["cues"]),
+            "coverage": r.get("coverage", "N/A"),
+            "status": "INVALID_RATE_LIMITED" if r.get("rate_limited", False) else ("FAILED" if r.get("failed", False) else "VALID"),
             "failed": r.get("failed", False),
             "rate_limited": r.get("rate_limited", False),
             "speech_onset": r.get("speech_onset", 0.0),
@@ -371,23 +381,31 @@ def run_evaluation(
         lang_acc = df_acc[df_acc["language"] == lang] if not df_acc.empty else pd.DataFrame()
         is_en = lang in ("en_us", "en")
         metric_name = "WER" if is_en else "CER"
-        if not lang_acc.empty:
+
+        lang_clips = [r for r in clip_results if r["language"] == lang]
+        lang_sent = sum(r.get("chunks_sent", 0) for r in lang_clips)
+        lang_recv = sum(r.get("results_received", 0) for r in lang_clips)
+        coverage_str = f"{lang_recv}/{lang_sent}" if lang_sent > 0 else "N/A"
+
+        failed_count = sum(1 for r in lang_clips if r.get("failed", False))
+        rate_limited_count = sum(1 for r in lang_clips if r.get("rate_limited", False))
+
+        if rate_limited_count > 0:
+            score_ratio_str = "INVALID_RATE_LIMITED"
+        elif not lang_acc.empty:
             avg_acc_score = lang_acc["wer"].mean() if is_en else lang_acc["cer"].mean()
             score_ratio_str = round(avg_acc_score / 100.0, 3)
         else:
             score_ratio_str = "N/A"
 
-        lang_cues = [c for r in clip_results if r["language"] == lang for c in r["cues"]]
+        lang_cues = [c for r in lang_clips for c in r["cues"]]
         lat_res = evaluate_latency(lang_cues) if lang_cues else {"median": 0.0, "p90": 0.0, "final_score_pct": 0.0}
         chrf_val = chrf_by_lang.get(lang, None)
 
-        lang_sync_gaps = [r["sync_gap"] for r in clip_results if r["language"] == lang and r.get("sync_gap") is not None]
+        lang_sync_gaps = [r["sync_gap"] for r in lang_clips if r.get("sync_gap") is not None]
         all_sync_gaps.extend(lang_sync_gaps)
         med_gap = float(np.median(lang_sync_gaps)) if lang_sync_gaps else 0.0
         p90_gap = float(np.percentile(lang_sync_gaps, 90)) if lang_sync_gaps else 0.0
-
-        failed_count = sum(1 for r in clip_results if r["language"] == lang and r.get("failed", False))
-        rate_limited_count = sum(1 for r in clip_results if r["language"] == lang and r.get("rate_limited", False))
 
         summary_rows.append({
             "Language": lang,
@@ -399,6 +417,7 @@ def run_evaluation(
             "Sync Gap Med/P90 (s)": f"{med_gap:.3f} / {p90_gap:.3f}",
             "Failed/Timeouts": failed_count,
             "Label": run_label,
+            "Coverage": coverage_str,
             "Rate-Limited": rate_limited_count
         })
 
@@ -407,11 +426,21 @@ def run_evaluation(
     overall_lat = evaluate_latency(overall_cues) if overall_cues else {"median": 0.0, "p90": 0.0, "final_score_pct": 0.0}
     overall_chrf = trans_eval.get("overall_chrf", 0.0) if trans_records else 0.0
     overall_acc_err = df_acc["primary_score"].mean() if not df_acc.empty else None
-    overall_score_ratio = round(overall_acc_err / 100.0, 3) if overall_acc_err is not None else "N/A"
     overall_med_gap = float(np.median(all_sync_gaps)) if all_sync_gaps else 0.0
     overall_p90_gap = float(np.percentile(all_sync_gaps, 90)) if all_sync_gaps else 0.0
     overall_failed = sum(1 for r in clip_results if r.get("failed", False))
     overall_rate_limited = sum(1 for r in clip_results if r.get("rate_limited", False))
+
+    overall_sent = sum(r.get("chunks_sent", 0) for r in clip_results)
+    overall_recv = sum(r.get("results_received", 0) for r in clip_results)
+    overall_coverage_str = f"{overall_recv}/{overall_sent}" if overall_sent > 0 else "N/A"
+
+    if overall_rate_limited > 0:
+        overall_score_ratio = "INVALID_RATE_LIMITED"
+    elif overall_acc_err is not None:
+        overall_score_ratio = round(overall_acc_err / 100.0, 3)
+    else:
+        overall_score_ratio = "N/A"
 
     summary_rows.append({
         "Language": "OVERALL",
@@ -423,6 +452,7 @@ def run_evaluation(
         "Sync Gap Med/P90 (s)": f"{overall_med_gap:.3f} / {overall_p90_gap:.3f}",
         "Failed/Timeouts": overall_failed,
         "Label": run_label,
+        "Coverage": overall_coverage_str,
         "Rate-Limited": overall_rate_limited
     })
 
