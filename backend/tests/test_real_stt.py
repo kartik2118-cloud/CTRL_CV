@@ -7,7 +7,10 @@ import wave
 from pathlib import Path
 
 # Add backend root directory to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+backend_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(backend_dir))
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=backend_dir / ".env")
 
 if sys.platform == "win32":
     try:

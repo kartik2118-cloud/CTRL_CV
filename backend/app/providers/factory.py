@@ -20,7 +20,7 @@ def get_stt_provider(provider_name: str) -> STTProvider:
 
     elif name in ("whisper", "groq", "openai"):
         logger.info("Initializing Whisper STT Provider (%s)", name)
-        return WhisperSTTProvider()
+        return WhisperSTTProvider(provider_type=name)
 
     elif name == "mock":
         logger.info("Initializing Mock STT Provider")
@@ -48,7 +48,7 @@ def get_translation_provider(provider_name: str) -> TranslationProvider:
 
     elif name in ("groq", "openai", "llm"):
         logger.info("Initializing LLM Translation Provider (%s)", name)
-        return LLMTranslationProvider()
+        return LLMTranslationProvider(provider_type=name)
 
     elif name == "mock":
         logger.info("Initializing Mock Translation Provider")

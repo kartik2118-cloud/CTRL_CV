@@ -13,19 +13,21 @@ class LLMTranslationProvider(TranslationProvider):
         self,
         api_key: str | None = None,
         base_url: str | None = None,
-        model: str | None = None
+        model: str | None = None,
+        provider_type: str | None = None,
     ):
-        groq_key = os.getenv("GROQ_API_KEY", "")
-        openai_key = os.getenv("OPENAI_API_KEY", "")
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        p_type = (provider_type or os.getenv("TRANSLATION_PROVIDER", "")).strip().lower()
 
-        if groq_key:
-            self.api_key = api_key or groq_key
-            self.endpoint = base_url or "https://api.groq.com/openai/v1/chat/completions"
-            self.model = model or "llama-3.3-70b-versatile"
-        else:
+        if p_type == "openai" or (openai_key and not groq_key and p_type not in ("groq", "llm")):
             self.api_key = api_key or openai_key
             self.endpoint = base_url or "https://api.openai.com/v1/chat/completions"
-            self.model = model or "gpt-4o-mini"
+            self.model = model or os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini")
+        else:
+            self.api_key = api_key or groq_key or openai_key
+            self.endpoint = base_url or "https://api.groq.com/openai/v1/chat/completions"
+            self.model = model or os.getenv("GROQ_TRANSLATION_MODEL", "qwen/qwen3.8-27b")
 
         self._cache: dict[tuple[str, str, str], str] = {}
 

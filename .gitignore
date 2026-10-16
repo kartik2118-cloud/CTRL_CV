@@ -5,7 +5,9 @@
 
 # Python artifacts
 __pycache__/
+*.pyc
 *.py[cod]
+*.log
 .pytest_cache/
 .venv/
 venv/

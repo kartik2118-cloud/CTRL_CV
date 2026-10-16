@@ -1,4 +1,5 @@
 import uuid
+import time
 from typing import Optional
 from app.models import ChunkMetaMessage
 
@@ -7,7 +8,7 @@ class SessionState:
     """
     Manages session-level state for an active WebSocket client connection.
     Keeps track of the epoch counter, playback rate, active languages,
-    and pending chunk metadata.
+    pending chunk metadata, authentication, and rate-limiting.
     """
 
     def __init__(self, client_id: Optional[str] = None, lang: str = "en", target_lang: Optional[str] = None):
@@ -17,11 +18,31 @@ class SessionState:
         self.lang: str = lang
         self.target_lang: Optional[str] = target_lang
         self.pending_meta: Optional[ChunkMetaMessage] = None
+        self.authenticated: bool = False
+        self.last_active_time: float = time.time()
+        self.chunk_timestamps: list[float] = []
+        self.in_flight_tasks: set = set()
+        self.client_protocol: str = "default"
+
+    def touch(self):
+        self.last_active_time = time.time()
+
+    def check_rate_limit(self, max_per_second: float = 5.0) -> bool:
+        """
+        Sliding 1-second window rate limiter. Returns True if within limit, False if exceeded.
+        """
+        now = time.time()
+        self.chunk_timestamps = [t for t in self.chunk_timestamps if now - t <= 1.0]
+        if len(self.chunk_timestamps) >= max_per_second:
+            return False
+        self.chunk_timestamps.append(now)
+        return True
 
     def handle_seek(self, new_epoch: Optional[int] = None) -> int:
         """
         Advances the epoch to invalidate in-flight or older chunks.
         If the client specified an epoch, adopts it; otherwise increments current epoch.
+        Also cancels any in-flight background processing tasks from the old epoch.
         """
         if new_epoch is not None:
             self.epoch = new_epoch
@@ -29,6 +50,13 @@ class SessionState:
             self.epoch += 1
         # Clear any pending chunk meta from the pre-seek period
         self.pending_meta = None
+
+        # Cancel in-flight tasks for old epoch
+        for task in list(self.in_flight_tasks):
+            if not task.done():
+                task.cancel()
+        self.in_flight_tasks.clear()
+
         return self.epoch
 
     def is_valid_epoch(self, epoch: int) -> bool:

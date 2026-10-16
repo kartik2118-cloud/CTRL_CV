@@ -13,7 +13,7 @@ if sys.platform == "win32":
         pass
 
 import uvicorn
-from app.config import HOST, PORT, STT_PROVIDER, TRANSLATION_PROVIDER
+from app.config import HOST, PORT, STT_PROVIDER, TRANSLATION_PROVIDER, IS_MOCK
 
 
 def get_local_ip() -> str:
@@ -35,6 +35,22 @@ def print_banner():
     print(f"  * Host / Port           : {HOST}:{PORT}")
     print(f"  * Active STT Provider   : {STT_PROVIDER.upper()}")
     print(f"  * Active Translation    : {TRANSLATION_PROVIDER.upper()}")
+
+    # Task 2: Loud warning banner if running in mock mode
+    if IS_MOCK or STT_PROVIDER == "mock" or TRANSLATION_PROVIDER == "mock":
+        print("!" * 70)
+        print("  WARNING: RUNNING IN MOCK PROVIDER MODE (SYNTHETIC SUBTITLES)")
+        print("  Do not use mock mode for live scoring by judges.")
+        print("  Set real API keys and providers (sarvam/groq) in .env before evaluation.")
+        print("!" * 70)
+
+    # Task 5: Auth token warning
+    from app.config import AUTH_TOKEN
+    if not AUTH_TOKEN:
+        print("  NOTICE: AUTH_TOKEN is not set. WebSocket server is open to unauthorized access.")
+    else:
+        print("  SECURITY: AUTH_TOKEN enforcement is ENABLED.")
+
     print("-" * 70)
     print("  CONNECTIVITY ENDPOINTS:")
     print(f"  * Local Health Check    : http://127.0.0.1:{PORT}/health")
@@ -42,13 +58,13 @@ def print_banner():
     print(f"  * Local WebSocket (dev) : ws://127.0.0.1:{PORT}/ws")
     print(f"  * LAN WebSocket (test)  : ws://{local_ip}:{PORT}/ws")
     print("-" * 70)
-    print("  PUBLIC TUNNEL (Optional for Judges & Remote Extension Testing):")
-    print("  * Using Cloudflare Tunnel (recommended, no sign-up needed):")
-    print(f"      cloudflared tunnel --url http://127.0.0.1:{PORT}")
-    print("  * Using Localtunnel (npm):")
-    print(f"      npx localtunnel --port {PORT}")
-    print("  * Using Ngrok:")
-    print(f"      ngrok http {PORT}")
+    print("  PRODUCTION DEPLOYMENT & WSS REQUIREMENT (CRITICAL FOR JUDGES):")
+    print("  * YouTube runs exclusively on HTTPS. Chrome security STRICTLY BLOCKS")
+    print("    plain ws:// connections due to mixed-content / CSP restrictions.")
+    print("  * A secure wss:// endpoint is MANDATORY for live evaluation on YouTube.")
+    print("  * Plain ws://127.0.0.1 ONLY works if testing on local non-HTTPS pages.")
+    print("  * Tunnels (Cloudflare / ngrok) are temporary FALLBACKS ONLY (URLs change on restart).")
+    print("  * For judges / evaluation, deploy to Render / Railway for a stable wss:// URL.")
     print("=" * 70)
     print("\nStarting Uvicorn Server...\n")
 
