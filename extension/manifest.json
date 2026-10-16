@@ -30,7 +30,11 @@
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
-      "js":  ["content/content.js"],
+      "js":  [
+        "vendor/syncEngine.browser.js",
+        "content/pipeline.js",
+        "content/content.js"
+      ],
       "css": ["content/content.css"],
       "run_at": "document_idle",
       "all_frames": false
@@ -50,7 +54,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "offscreen/audio-processor.js"
+        "offscreen/audio-processor.js",
+        "vendor/syncEngine.browser.js"
       ],
       "matches": [
         "https://www.youtube.com/*"

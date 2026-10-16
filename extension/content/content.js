@@ -182,6 +182,10 @@ function clearSubtitle() {
   showSubtitle({ text: '', translation: '' });
 }
 
+// Expose render callbacks on window for pipeline.js
+window.__livesubRenderSubtitle = showSubtitle;
+window.__livesubClearSubtitle = clearSubtitle;
+
 function updateStyle({ fontSize, color, position } = {}) {
   if (fontSize !== undefined) {
     currentStyle.fontSize = Number(fontSize);
