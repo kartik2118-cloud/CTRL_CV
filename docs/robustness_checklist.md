@@ -1,0 +1,12 @@
+# Robustness Verification Checklist
+
+This checklist documents the manual acceptance test procedures for edge-case robustness, security, and privacy requirements.
+
+| Robustness Criterion | Kaise Check Karein (How to Test) | Expected Behavior | Owner |
+|---|---|---|---|
+| **SPA Navigation Subtitle Clear** | 1. Play video A with active subtitles.<br>2. Click a related video on YouTube/webpage (SPA client-side navigation without full page reload).<br>3. Measure elapsed time until video A's subtitles disappear. | All subtitles and cached overlays from video A MUST clear within 2.0 seconds (`engine.onNavigation()` triggers cache purge and epoch bump). | Role D (Engine) / Role B (Overlay) |
+| **Tab Audio Only When Audible** | 1. Play video with sound enabled.<br>2. Mute YouTube player or mute the browser tab.<br>3. Inspect extension background network activity / WebSocket frames. | Zero audio chunks sent over WebSocket while tab is muted or paused. No phantom transcription generated. | Role B (Audio Capture) |
+| **Ad Speech Isolation** | 1. Play a video that triggers a pre-roll or mid-roll advertisement.<br>2. Observe subtitle overlay and review exported `cue_log.json`. | Speech from the advertisement MUST NOT appear on the main video timeline (`engine.onAdStart()` isolates ad audio; `engine.onAdEnd()` resets epoch). | Role D (Engine) / Role B (Ad Detector) |
+| **Cloud-Audio Privacy Notice & Off Switch** | 1. Open extension popup / options panel.<br>2. Check for clear disclosure of cloud processing.<br>3. Toggle subtitle extension switch to OFF.<br>4. Monitor WebSocket connection. | Explicit notice displayed to user that audio chunks are streamed to cloud. When switched OFF, WebSocket connection immediately terminates and capture stops. | Role B (UI / Extension) |
+| **No API Keys or Secrets Committed** | 1. Run secret scanner in terminal:<br>`git grep -nIiE "api[_-]?key\|gsk_\|secret\|token"`<br>2. Inspect `.gitignore` and git history. | Zero private keys, API secrets, or sensitive tokens present in repository or bundle zip. Only public template references allowed. | All Roles (Audited by Role D) |
+| **No Media File Download to Disk** | 1. Monitor local disk I/O and storage during 10 minutes of video playback.<br>2. Inspect temporary directory and browser download history. | Video and audio media are NEVER downloaded or cached as complete media files on disk. Audio exists only as ephemeral memory buffers streamed via WebSocket chunks. | Role B (Extension) / Role C (Backend) |

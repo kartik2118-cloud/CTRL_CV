@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CueLog",
+  "description": "Schema for exported subtitle cue logs as defined in AGENT_CONTEXT.md.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "start",
+      "end",
+      "lang",
+      "text",
+      "translation",
+      "source",
+      "first_shown_at",
+      "revisions"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "start": {
+        "type": "number",
+        "minimum": 0.0,
+        "description": "Subtitle start time in video seconds."
+      },
+      "end": {
+        "type": "number",
+        "minimum": 0.0,
+        "description": "Subtitle end time in video seconds."
+      },
+      "lang": {
+        "type": "string",
+        "description": "Language code of the recognized speech (e.g. 'hi', 'en')."
+      },
+      "text": {
+        "type": "string",
+        "description": "Final transcription text."
+      },
+      "translation": {
+        "type": "string",
+        "description": "Translated subtitle text."
+      },
+      "source": {
+        "type": "string",
+        "enum": ["stt", "captions"],
+        "description": "Source of subtitle: 'stt' for streaming recognition, 'captions' for uploaded tracks."
+      },
+      "first_shown_at": {
+        "type": "number",
+        "minimum": 0.0,
+        "description": "Video timestamp when final text first appeared in full."
+      },
+      "revisions": {
+        "type": "array",
+        "description": "Log of intermediate revisions leading to the final text.",
+        "items": {
+          "type": "object",
+          "required": ["at", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "type": "number",
+              "minimum": 0.0,
+              "description": "Video timestamp when revision was rendered."
+            },
+            "text": {
+              "type": "string",
+              "description": "Subtitle text at revision timestamp."
+            }
+          }
+        }
+      }
+    }
+  }
+}

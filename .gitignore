@@ -12,3 +12,8 @@ venv/
 
 # Local tooling
 .vscode/
+
+# Evaluation artifacts
+eval/data/
+eval/results/
+eval/venv/

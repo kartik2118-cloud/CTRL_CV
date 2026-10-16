@@ -1,3 +1,7 @@
+# CTRL_CV
+
+Extension-based project for YouTube subtitles.
+
 # LiveSub — Overlay Spike
 
 Chrome MV3 extension that renders live subtitles as an overlay on YouTube videos.  
