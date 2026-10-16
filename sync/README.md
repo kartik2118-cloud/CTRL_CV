@@ -32,3 +32,9 @@ MV3 content scripts cannot use static ES module imports (`import ... from ...`).
 const { SyncEngine } = await import(chrome.runtime.getURL('sync/syncEngine.js'));
 ```
 with `sync/syncEngine.js` declared in the manifest's `web_accessible_resources`.
+
+### Seek-Back Re-Show Entries (Decision D1 Tradeoff)
+1. **Tradeoff**: Re-show entries emit a new cue log entry when a cached cue is re-displayed after seek-back, enabling judge scorers to measure post-seek recovery directly from the static log without real-time harness telemetry.
+2. **Schema & Safety**: Preserves the strict 8-field cue log schema without custom flags, maintaining complete compatibility with existing evaluators.
+3. **Log Implication**: Produces duplicate speech time intervals (`start`/`end`) across distinct `first_shown_at` timestamps in the exported cue log for re-played segments (flag `--reshow_entries=false` restores single-entry export).
+

@@ -65,15 +65,22 @@ export class SyncEngine {
     let cue = this.store.get(key);
     const at = Number(this.getVideoTime().toFixed(2));
 
+    const langsList = Array.isArray(result.langs) && result.langs.length > 0
+      ? result.langs
+      : (result.lang ? [result.lang] : ["hi"]);
+    const dominantLang = result.lang || langsList[0] || "hi";
+
     if (!cue) {
       cue = {
         _epoch: result.epoch,
         _chunk_id: result.chunk_id,
         _holdUntil: null,
         _arrivalVideoTime: null,
+        _shows: [],
+        _langs: langsList,
         start,
         end,
-        lang: result.lang || (Array.isArray(result.langs) && result.langs[0]) || "hi",
+        lang: dominantLang,
         text: result.text || "",
         translation: result.translation || "",
         source: result.source || "stt",
@@ -84,7 +91,8 @@ export class SyncEngine {
     } else {
       cue.start = start;
       cue.end = end;
-      if (result.lang) cue.lang = result.lang;
+      cue.lang = dominantLang;
+      cue._langs = langsList;
       if (result.text !== undefined) cue.text = result.text;
       if (result.translation !== undefined) cue.translation = result.translation;
     }
@@ -96,14 +104,15 @@ export class SyncEngine {
     });
 
     // Late-cue policy:
-    // If live result arrives after its speech end (at > end):
+    // If live result arrives at or after its speech end (at >= end):
     // Hold visible from arrival time for minHold seconds (default 2.0s).
     // first_shown_at = arrival video time.
-    if (at > end) {
+    if (at >= end) {
       cue._arrivalVideoTime = at;
       cue._holdUntil = Number((at + this.minHold).toFixed(2));
       if (cue.first_shown_at === null) {
         cue.first_shown_at = at;
+        cue._shows.push({ epoch: this.epoch, at });
       }
     } else {
       cue._holdUntil = null;
@@ -234,17 +243,32 @@ export class SyncEngine {
   }
 
   /**
-   * Marks a cue as first shown on screen, recording first_shown_at once.
+   * Marks a cue as shown on screen in the current epoch.
    * Uses video timeline seconds (videoTime parameter or getVideoTime()).
-   * Ignores subsequent calls once first_shown_at is set.
+   * 
+   * Epoch awareness (Decision D1):
+   * Within the same epoch, subsequent calls are ignored (first_shown_at is never overwritten).
+   * Across different epochs (e.g. after a seek-back), re-showing records the new epoch display time.
    * 
    * @param {Object} cue Cue to mark
    * @param {number} [videoTime] Video timeline seconds
    */
   markShown(cue, videoTime) {
-    if (cue && cue.first_shown_at === null) {
-      const vTime = typeof videoTime === "number" ? videoTime : this.getVideoTime();
-      cue.first_shown_at = Number(vTime.toFixed(2));
+    if (!cue) return;
+    const vTime = Number((typeof videoTime === "number" ? videoTime : this.getVideoTime()).toFixed(2));
+    if (!cue._shows) {
+      cue._shows = [];
+      if (cue.first_shown_at !== null) {
+        cue._shows.push({ epoch: cue._epoch || this.epoch, at: cue.first_shown_at });
+      }
+    }
+
+    const shownInCurrentEpoch = cue._shows.some(s => s.epoch === this.epoch);
+    if (!shownInCurrentEpoch) {
+      cue._shows.push({ epoch: this.epoch, at: vTime });
+      if (cue.first_shown_at === null) {
+        cue.first_shown_at = vTime;
+      }
     }
   }
 
@@ -253,32 +277,80 @@ export class SyncEngine {
    * Exactly 8 fields per cue: start, end, lang, text, translation, source, first_shown_at, revisions.
    * 
    * Strict Rule: Only cues that were actually displayed (markShown called) are exported.
-   * Cues where first_shown_at is null (never shown) are excluded from the log.
+   * Cues where markShown was never called are excluded from the log.
    * 
-   * @returns {Array<Object>} Root array of displayed cues sorted by start time
+   * Decision D1 (Seek-back re-show):
+   * When reshow_entries is true (default ON), if a cue was re-displayed in subsequent epochs
+   * (e.g. seek-back cache hit), a new cue log entry is emitted for each epoch show with:
+   *   first_shown_at = show.at, revisions = [{ at: show.at, text: cue.text }].
+   * When reshow_entries is false, legacy single-entry export is performed.
+   * 
+   * @param {Object} [options]
+   * @param {boolean} [options.reshow_entries=true] Whether to emit new log entries for seek re-shows (D1)
+   * @returns {Array<Object>} Root array of displayed cues
    */
-  exportLog() {
-    return Array.from(this.store.values())
-      .filter(c => c.first_shown_at !== null && typeof c.first_shown_at === "number")
-      .sort((a, b) => a.start - b.start)
-      .map(c => {
-        let revisions = c.revisions;
-        if (!revisions || revisions.length === 0) {
-          revisions = [{ at: c.first_shown_at, text: c.text }];
-        }
+  exportLog({ reshow_entries = true } = {}) {
+    const paired = [];
+    const cues = Array.from(this.store.values()).sort((a, b) => (a.start - b.start) || (a.end - b.end));
 
-        // Strictly 8 schema properties only (no _epoch, _chunk_id or extra fields)
-        return {
+    for (const c of cues) {
+      const shows = c._shows && c._shows.length > 0
+        ? c._shows
+        : (c.first_shown_at !== null ? [{ epoch: c._epoch || 1, at: c.first_shown_at }] : []);
+
+      if (shows.length === 0) continue;
+
+      const baseRevisions = (c.revisions && c.revisions.length > 0)
+        ? c.revisions.map(r => ({ at: r.at, text: r.text }))
+        : [{ at: shows[0].at, text: c.text }];
+
+      const showsToExport = reshow_entries ? shows : [shows[0]];
+
+      for (let sIdx = 0; sIdx < showsToExport.length; sIdx++) {
+        const show = showsToExport[sIdx];
+        const entryRevisions = sIdx === 0
+          ? baseRevisions
+          : [{ at: show.at, text: c.text }];
+
+        const entry = {
           start: c.start,
           end: c.end,
           lang: c.lang,
           text: c.text,
           translation: c.translation,
           source: c.source,
-          first_shown_at: c.first_shown_at,
-          revisions: revisions.map(r => ({ at: r.at, text: r.text }))
+          first_shown_at: show.at,
+          revisions: entryRevisions
         };
-      });
+
+        paired.push({
+          entry,
+          langs: c._langs || (c.lang ? [c.lang] : ["hi"])
+        });
+      }
+    }
+
+    paired.sort((a, b) => (a.entry.start - b.entry.start) || (a.entry.first_shown_at - b.entry.first_shown_at));
+    const result = paired.map(p => p.entry);
+    this._lastExportedLangs = paired.map(p => p.langs);
+    this._lastExportedList = result;
+    return result;
+  }
+
+  /**
+   * Exports full language list sidecar dictionary matching Decision D2.
+   * Returns: { [cueIndex]: ["hi", "en"] }
+   * 
+   * @param {Array<Object>} [exportedCues] Optional list of exported cues
+   * @returns {Object} Sidecar dictionary mapping cue index to langs array
+   */
+  exportLangsSidecar(exportedCues = null) {
+    const sidecar = {};
+    const count = exportedCues ? exportedCues.length : (this._lastExportedLangs ? this._lastExportedLangs.length : 0);
+    for (let i = 0; i < count; i++) {
+      sidecar[i] = (this._lastExportedLangs && this._lastExportedLangs[i]) || [(exportedCues && exportedCues[i] && exportedCues[i].lang) || "hi"];
+    }
+    return sidecar;
   }
 
   /**

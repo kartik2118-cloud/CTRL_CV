@@ -733,3 +733,224 @@ test("18. Late-cue policy: seek pe hold clear & seek-back cached cues pe hold na
   assert.equal(engine.getVisibleCues(11.0).length, 1);
   assert.equal(engine.getVisibleCues(11.0)[0].text, "सीक होल्ड टेस्ट");
 });
+
+test("19. D1 (a): Seek-back with cached cue produces 2 entries in exportLog; second first_shown_at = seek-back time", () => {
+  let currentTime = 10.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  // Cue arrives in epoch 1
+  const { cue } = engine.onResult({
+    chunk_id: 1901,
+    epoch: 1,
+    is_final: true,
+    start_offset: 2.0,
+    end_offset: 5.0,
+    lang: "hi",
+    text: "सीक बैक पुनः प्रदर्शन",
+    translation: "Seek back re-show"
+  }, ctx);
+
+  // 1st show in epoch 1 at video time 12.5s
+  currentTime = 12.5;
+  engine.markShown(cue, 12.5);
+  assert.equal(cue.first_shown_at, 12.5);
+
+  // User seeks forward to 60.0s (epoch 2)
+  currentTime = 60.0;
+  engine.onSeek(60.0);
+  assert.equal(engine.epoch, 2);
+
+  // User seeks back to 13.0s (epoch 3)
+  currentTime = 13.0;
+  engine.onSeek(13.0);
+  assert.equal(engine.epoch, 3);
+
+  // Overlay finds cached cue covering 13.0s and calls markShown with seek-back time
+  const visible = engine.getVisibleCues(13.0);
+  assert.equal(visible.length, 1);
+  engine.markShown(visible[0], 13.0);
+
+  // Default exportLog (reshow_entries = true) produces 2 distinct entries
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 2, "Must produce exactly 2 entries for re-shown cached cue");
+
+  // Entry 1: initial show in epoch 1
+  assert.equal(exported[0].start, 12.0);
+  assert.equal(exported[0].end, 15.0);
+  assert.equal(exported[0].first_shown_at, 12.5);
+  assert.equal(exported[0].text, "सीक बैक पुनः प्रदर्शन");
+
+  // Entry 2: re-show in epoch 3 with first_shown_at = 13.0
+  assert.equal(exported[1].start, 12.0);
+  assert.equal(exported[1].end, 15.0);
+  assert.equal(exported[1].first_shown_at, 13.0);
+  assert.equal(exported[1].text, "सीक बैक पुनः प्रदर्शन");
+  assert.deepEqual(exported[1].revisions, [{ at: 13.0, text: "सीक बैक पुनः प्रदर्शन" }]);
+});
+
+test("20. D1 (b): Overlay does NOT call markShown on seek-back -> second entry is NOT created", () => {
+  let currentTime = 10.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  const { cue } = engine.onResult({
+    chunk_id: 2001,
+    epoch: 1,
+    is_final: true,
+    start_offset: 2.0,
+    end_offset: 5.0,
+    lang: "hi",
+    text: "बिना दिखाए सीक"
+  }, ctx);
+
+  // Shown in epoch 1
+  currentTime = 12.5;
+  engine.markShown(cue, 12.5);
+
+  // Seek back to 13.0 (epoch 2)
+  currentTime = 13.0;
+  engine.onSeek(13.0);
+
+  // Overlay does NOT call markShown
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 1, "Only 1 entry must exist if markShown was never called in new epoch");
+  assert.equal(exported[0].first_shown_at, 12.5);
+});
+
+test("21. D1 (c): --reshow_entries off ({ reshow_entries: false }) preserves legacy single-entry behavior", () => {
+  let currentTime = 10.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  const { cue } = engine.onResult({
+    chunk_id: 2101,
+    epoch: 1,
+    is_final: true,
+    start_offset: 2.0,
+    end_offset: 5.0,
+    lang: "hi",
+    text: "फ्लैग ऑफ टेस्ट"
+  }, ctx);
+
+  // Show in epoch 1
+  engine.markShown(cue, 12.5);
+
+  // Seek back in epoch 2 and re-show
+  engine.onSeek(13.0);
+  engine.markShown(cue, 13.0);
+
+  // With reshow_entries: false -> legacy single entry
+  const legacyExport = engine.exportLog({ reshow_entries: false });
+  assert.equal(legacyExport.length, 1, "Must export strictly 1 entry when reshow_entries is false");
+  assert.equal(legacyExport[0].first_shown_at, 12.5);
+});
+
+test("22. D1 (d): exportLog output with re-show entries PASSES eval/validate_log.py", () => {
+  const pythonCmd = getPythonCommand();
+  const validatorScript = path.join(ROOT_DIR, "eval", "validate_log.py");
+
+  const engine = new SyncEngine({ getVideoTime: () => 10.0 });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  const { cue } = engine.onResult({
+    chunk_id: 2201,
+    epoch: 1,
+    is_final: true,
+    start_offset: 2.0,
+    end_offset: 5.0,
+    lang: "hi",
+    text: "स्कीमा वैलिडेशन टेस्ट",
+    translation: "Schema validation test"
+  }, ctx);
+
+  engine.markShown(cue, 12.5);
+  engine.onSeek(13.0);
+  engine.markShown(cue, 13.0);
+
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 2);
+
+  const testLogPath = path.join(EVAL_RESULTS_DIR, "cue_log_test_reshow.json");
+  fs.mkdirSync(EVAL_RESULTS_DIR, { recursive: true });
+  fs.writeFileSync(testLogPath, JSON.stringify(exported, null, 2), "utf-8");
+
+  const valOutput = execFileSync(pythonCmd, [validatorScript, testLogPath], {
+    encoding: "utf-8",
+    cwd: ROOT_DIR
+  });
+  console.log(`[Re-show Log Validation]:\n${valOutput.trim()}`);
+  assert.ok(valOutput.includes("PASS"), "Exported re-show cue log must pass validate_log.py");
+});
+
+test("23. D1 (e): Without seek (accuracy path: continuous playback), duplicates are NEVER created", () => {
+  let currentTime = 0.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 0.0, playback_rate: 1.0 };
+
+  // 3 sequential cues in epoch 1
+  for (let i = 1; i <= 3; i++) {
+    const { cue } = engine.onResult({
+      chunk_id: 2300 + i,
+      epoch: 1,
+      is_final: true,
+      start_offset: (i - 1) * 3.0,
+      end_offset: i * 3.0,
+      lang: "hi",
+      text: `लगातार भाषण ${i}`
+    }, ctx);
+
+    // Mark shown repeatedly across ticks
+    engine.markShown(cue, (i - 1) * 3.0 + 0.5);
+    engine.markShown(cue, (i - 1) * 3.0 + 1.0);
+    engine.markShown(cue, (i - 1) * 3.0 + 1.5);
+  }
+
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 3, "Exactly 3 cues exported for 3 sequential chunks with no seeks");
+});
+
+test("24. D2: Code-mixed sidecar: {'lang':'hi','langs':['hi','en']} -> log lang 'hi', sidecar ['hi','en'], validate_log pass", () => {
+  const pythonCmd = getPythonCommand();
+  const validatorScript = path.join(ROOT_DIR, "eval", "validate_log.py");
+
+  const engine = new SyncEngine({ getVideoTime: () => 10.0 });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  const { cue } = engine.onResult({
+    chunk_id: 2401,
+    epoch: 1,
+    is_final: true,
+    start_offset: 1.0,
+    end_offset: 4.0,
+    lang: "hi",
+    langs: ["hi", "en"],
+    text: "आज हम paneer tikka बनाएंगे",
+    translation: "Today we will make paneer tikka"
+  }, ctx);
+
+  engine.markShown(cue, 11.2);
+
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 1);
+  assert.equal(exported[0].lang, "hi", "Cue log lang must be single string dominant language");
+  assert.equal(exported[0].langs, undefined, "Strict 8 fields: langs must not be in exported cue log");
+
+  // Sidecar dictionary
+  const sidecar = engine.exportLangsSidecar(exported);
+  assert.deepEqual(sidecar[0], ["hi", "en"], "Sidecar dictionary must store full langs list");
+
+  const testLogPath = path.join(EVAL_RESULTS_DIR, "cue_log_codemixed.json");
+  const testSidecarPath = path.join(EVAL_RESULTS_DIR, "cue_log_codemixed.langs.json");
+  fs.mkdirSync(EVAL_RESULTS_DIR, { recursive: true });
+  fs.writeFileSync(testLogPath, JSON.stringify(exported, null, 2), "utf-8");
+  fs.writeFileSync(testSidecarPath, JSON.stringify(sidecar, null, 2), "utf-8");
+
+  const valOutput = execFileSync(pythonCmd, [validatorScript, testLogPath], {
+    encoding: "utf-8",
+    cwd: ROOT_DIR
+  });
+  console.log(`[Code-Mixed Log Validation]:\n${valOutput.trim()}`);
+  assert.ok(valOutput.includes("PASS"), "Code-mixed cue log must pass validate_log.py");
+});
+

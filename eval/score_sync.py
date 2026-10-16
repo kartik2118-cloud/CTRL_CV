@@ -161,6 +161,20 @@ def check_seek_events(cues: list[dict], seek_events_input) -> dict:
                 else:
                     post_seek_cues.append(c)
 
+        if not is_seek_back:
+            recovery_results.append({
+                "seek_index": seek_id,
+                "seek_time": ref_seek_time,
+                "from_video_time": from_v,
+                "to_video_time": to_v,
+                "is_seek_back": False,
+                "first_shown_at": None,
+                "recovery_seconds": None,
+                "status": "INFO (rule not applicable)",
+                "message": f"Forward seek from {from_v}s to {to_v}s (1.0s recovery rule only applies to seek-back)"
+            })
+            continue
+
         # Find the first cue shown after seek that covers the new video position (to_v)
         covering_cues = []
         for c in post_seek_cues:
@@ -178,7 +192,9 @@ def check_seek_events(cues: list[dict], seek_events_input) -> dict:
             recovery_results.append({
                 "seek_index": seek_id,
                 "seek_time": ref_seek_time,
+                "from_video_time": from_v,
                 "to_video_time": to_v,
+                "is_seek_back": True,
                 "first_shown_at": first_shown,
                 "recovery_seconds": recovery,
                 "status": "PASS" if passed else "FAIL",
@@ -188,15 +204,18 @@ def check_seek_events(cues: list[dict], seek_events_input) -> dict:
             recovery_results.append({
                 "seek_index": seek_id,
                 "seek_time": ref_seek_time,
+                "from_video_time": from_v,
                 "to_video_time": to_v,
+                "is_seek_back": True,
                 "first_shown_at": None,
                 "recovery_seconds": None,
                 "status": "FAIL",
                 "message": f"No cue appeared covering new video position {to_v}s"
             })
 
-    # Summary per rule
-    recovery_all_passed = len(recovery_results) > 0 and all(r["status"] == "PASS" for r in recovery_results)
+    # Summary per rule: 1.0s recovery applies strictly to seek-back per D3
+    seek_backs = [r for r in recovery_results if r.get("is_seek_back", True)]
+    recovery_all_passed = (len(seek_backs) == 0) or all(r["status"] == "PASS" for r in seek_backs)
     stale_passed = len(stale_violations) == 0
 
     return {
@@ -257,20 +276,20 @@ def run_unit_tests():
     print(f"  Result    : {rec_a['status']}")
     assert rec_a["status"] == "PASS", f"Expected PASS for 0.6s recovery, got {rec_a['status']}"
 
-    # 3. Self-test B: cue at 1.8 s after seek -> FAIL
+    # 3. Self-test B: cue at 1.8 s after seek -> EXPECTED FAIL
     seek_b = [{"seek_time": 50.0, "from_video_time": 65.0, "to_video_time": 20.0}]
     cues_b = [
         {"start": 20.0, "end": 23.0, "first_shown_at": 51.8, "text": "देर से आया सबटाइटल"}
     ]
     res_b = check_seek_events(cues_b, seek_b)
     rec_b = res_b["recovery_results"][0]
-    print(f"\n[SELF-TEST B: Cue shown 1.8s after seek]")
+    print(f"\n[SELF-TEST B (EXPECTED FAIL): Cue shown 1.8s after seek]")
     print(f"  Seek time = 50.0s, Cue covering 20.0s shown at = 51.8s")
     print(f"  Recovery  = {rec_b['recovery_seconds']} s")
-    print(f"  Result    : {rec_b['status']}")
+    print(f"  Result    : {rec_b['status']} (EXPECTED FAIL: 1.8s > 1.0s target)")
     assert rec_b["status"] == "FAIL", f"Expected FAIL for 1.8s recovery, got {rec_b['status']}"
 
-    # 4. Self-test C: Stale cue after seek -> FAIL
+    # 4. Self-test C: Stale cue after seek -> EXPECTED FAIL
     seek_c = [{"seek_time": 50.0, "from_video_time": 65.0, "to_video_time": 20.0}]
     cues_c = [
         # Stale cue from pre-seek position 64.0s arrives after seek at 50.3s
@@ -280,11 +299,11 @@ def run_unit_tests():
     ]
     res_c = check_seek_events(cues_c, seek_c)
     stale_c = res_c["stale_rule"]
-    print(f"\n[SELF-TEST C: Stale cue after seek]")
+    print(f"\n[SELF-TEST C (EXPECTED FAIL): Stale cue after seek]")
     print(f"  Stale Violations Count = {stale_c['count']}")
     for v in res_c["stale_violations"]:
         print(f"  - {v['message']}")
-    print(f"  Result                 : {stale_c['status']}")
+    print(f"  Result                 : {stale_c['status']} (EXPECTED FAIL: violations > 0)")
     assert stale_c["status"] == "FAIL", f"Expected FAIL for stale cue detection, got {stale_c['status']}"
 
     # Save summary report to results/
@@ -293,8 +312,8 @@ def run_unit_tests():
     df = pd.DataFrame([
         {"rule": "START_TIME_SYNC_GAP", "metric": f"median={gap_res['median_gap']}s", "status": gap_res["status"]},
         {"rule": "SEEK_RECOVERY_TIME (0.6s test)", "metric": f"recovery={rec_a['recovery_seconds']}s", "status": rec_a["status"]},
-        {"rule": "SEEK_RECOVERY_TIME (1.8s test)", "metric": f"recovery={rec_b['recovery_seconds']}s", "status": rec_b["status"]},
-        {"rule": "STALE_CUE_AFTER_SEEK (stale test)", "metric": f"violations={stale_c['count']}", "status": stale_c["status"]},
+        {"rule": "SEEK_RECOVERY_TIME (1.8s test)", "metric": f"recovery={rec_b['recovery_seconds']}s", "status": "EXPECTED FAIL"},
+        {"rule": "STALE_CUE_AFTER_SEEK (stale test)", "metric": f"violations={stale_c['count']}", "status": "EXPECTED FAIL"},
     ])
     df.to_csv(summary_csv, index=False, encoding="utf-8")
     print(f"\nSaved self-test rule results to: {summary_csv}")
