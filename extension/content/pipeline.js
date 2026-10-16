@@ -123,17 +123,29 @@
     console.log('[CtrlCV Pipeline] SyncBridge mounted to video element.');
   }
 
+  let pollInterval = null;
   function pollForVideo() {
     const video = document.querySelector('#movie_player video') || document.querySelector('video');
     if (video) {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
       setupVideoListeners(video);
       return;
     }
-    const interval = setInterval(() => {
+    if (pollInterval) return;
+    let attempts = 0;
+    pollInterval = setInterval(() => {
+      attempts++;
       const v = document.querySelector('#movie_player video') || document.querySelector('video');
       if (v) {
-        clearInterval(interval);
+        clearInterval(pollInterval);
+        pollInterval = null;
         setupVideoListeners(v);
+      } else if (attempts >= 60) {
+        clearInterval(pollInterval);
+        pollInterval = null;
       }
     }, 400);
   }
@@ -223,12 +235,12 @@
   // 7. Expose Judge Export Hooks on Window
   window.__ctrlcvExportCueLog = function(asString = false) {
     const cues = bridge ? bridge.exportLog() : [];
-    return asString ? JSON.stringify(cues, null, 2) : JSON.stringify(cues, null, 2);
+    return asString ? JSON.stringify(cues, null, 2) : cues;
   };
 
   window.__ctrlcvExportArchive = function(asString = false) {
     const archive = bridge ? bridge.exportArchive() : [];
-    return asString ? JSON.stringify(archive, null, 2) : JSON.stringify(archive, null, 2);
+    return asString ? JSON.stringify(archive, null, 2) : archive;
   };
 
   window.__ctrlcvGetBridge = function() {
