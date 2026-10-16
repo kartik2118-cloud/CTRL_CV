@@ -79,16 +79,26 @@ const bridge = new SyncBridge({
 });
 ```
 
-### 2.2 Outgoing Audio Chunk Headers
-When Role B's capture pipeline sends an audio chunk to the WebSocket backend, include `bridge.getEpoch()` in the chunk header:
+### 2.2 Outgoing Audio Chunk Headers & `registerChunk`
+When Role B's capture pipeline sends an audio chunk to the WebSocket backend:
+1. Register chunk metadata at send time via `bridge.registerChunk(chunk_id, { video_start_time, playback_rate })`. This preserves the video timestamp and playback rate at the exact moment of capture, guaranteeing that late results calculate `t_video` correctly even if the user changed playback speed in the meantime.
+2. Include `bridge.getEpoch()` in the chunk header:
 ```javascript
 function sendAudioChunk(pcmBytes, videoStartTime, playbackRate) {
+  const chunkId = nextChunkId++;
+  const vStart = videoStartTime !== undefined ? videoStartTime : Number(video.currentTime.toFixed(2));
+  const rate = playbackRate !== undefined ? playbackRate : video.playbackRate;
+
+  // 1. Register context in bridge (capped map with automatic pruning)
+  bridge.registerChunk(chunkId, { video_start_time: vStart, playback_rate: rate });
+
+  // 2. Transmit header & binary PCM frame
   const header = {
     type: "chunk",
-    chunk_id: nextChunkId++,
+    chunk_id: chunkId,
     epoch: bridge.getEpoch(), // Uses Bridge epoch; Role A does NOT manage a separate counter
-    video_start_time: videoStartTime,
-    playback_rate: playbackRate,
+    video_start_time: vStart,
+    playback_rate: rate,
     sample_rate: 16000
   };
 
@@ -98,15 +108,16 @@ function sendAudioChunk(pcmBytes, videoStartTime, playbackRate) {
 ```
 
 ### 2.3 Inbound Backend Result Frames
-Pass received result frames directly to `bridge.handleResult()`:
+Pass received result frames directly to `bridge.handleResult(result)`.
+`SyncBridge` retrieves the send-time context (`video_start_time`, `playback_rate`) from the internal registered map. If the chunk was never registered or was pruned, `handleResult` safely drops it with `{ status: "dropped", reason: "unknown_chunk" }`:
 ```javascript
 websocket.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   if (msg.type === "result") {
-    bridge.handleResult(msg, {
-      video_start_time: msg.video_start_time || currentChunkVideoStartTime,
-      playback_rate: video.playbackRate
-    });
+    const outcome = bridge.handleResult(msg); // Context looked up automatically
+    if (outcome.status === "dropped") {
+      console.warn('[CtrlCV] Dropped STT result:', outcome.reason, msg.chunk_id);
+    }
   }
 };
 ```
@@ -114,9 +125,11 @@ websocket.onmessage = (event) => {
 ### 2.4 YouTube SPA Navigation & Advertisement Handlers
 ```javascript
 // YouTube SPA Navigation (client-side page transition without reload)
+// Archives current video cues into history before resetting active engine timeline
 window.addEventListener('yt-navigate-finish', () => {
-  console.log('[CtrlCV] YouTube navigation detected -> resetting timeline');
-  bridge.onNavigation();
+  const videoId = new URLSearchParams(window.location.search).get('v') || 'unknown';
+  console.log('[CtrlCV] YouTube navigation detected -> archiving session & resetting timeline');
+  bridge.onNavigation({ video_id: videoId, title: document.title });
 });
 
 // YouTube Ad Detection (MutationObserver or player ad classes)
@@ -146,9 +159,9 @@ adObserver.observe(document.querySelector('#movie_player') || document.body, {
 > The exact trigger mechanism (whether via automated DevTools hook, popup button, or keyboard shortcut) is **UNDEFINED** in organizer docs. Requires confirmation from mentor.
 
 ### Interim Standard Implementation for Role A
-To ensure judges can download the cue log after each test video, expose both a global DevTools hook and a popup button:
+To ensure judges can download the cue log after each test video, expose both current video log export and historical session archive export:
 ```javascript
-// Expose global download hook on window
+// 1. Export current video cue log (matching docs/cue_log.schema.json)
 window.__ctrlcvExportCueLog = function(download = true) {
   const cues = bridge.exportLog();
   const sidecar = bridge.exportLangsSidecar(cues);
@@ -168,7 +181,14 @@ window.__ctrlcvExportCueLog = function(download = true) {
   }
   return { cues, sidecar };
 };
+
+// 2. Export previous videos archive: [{ meta, cues }]
+window.__ctrlcvExportArchive = function() {
+  return bridge.exportArchive();
+};
 ```
+See [docs/example_content.js](file:///d:/CtrlCV/docs/example_content.js) for the complete reference implementation wiring all components in ~60 lines.
+
 In extension `popup.html`:
 Add a button `<button id="btn-export-log">Export Cue Log (JSON)</button>` that sends a message to `content.js` to trigger `window.__ctrlcvExportCueLog(true)`.
 

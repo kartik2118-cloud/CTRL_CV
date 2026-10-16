@@ -1222,4 +1222,153 @@ test("30. F5 (e): SyncBridge: markShown called on visible cues exactly once per 
   bridge.destroy();
 });
 
+test("31. F5 (f): SyncBridge: registerChunk at 1.5x -> rate changes to 0.75 -> late result t_video uses 1.5x", () => {
+  const video = new FakeVideo(10.0, 1.5);
+  const bridge = new SyncBridge({
+    video,
+    render: () => {},
+    tickMs: 50
+  });
+
+  // 1. Chunk registered at send time with video_start_time=10.0 and playback_rate=1.5
+  bridge.registerChunk(3101, { video_start_time: 10.0, playback_rate: 1.5 });
+
+  // 2. Playback rate changes to 0.75 before result arrives
+  video.setRate(0.75);
+  assert.equal(bridge.playbackRate, 0.75);
+
+  // 3. Late result arrives for chunk 3101 with start_offset=2.0, end_offset=4.0
+  const outcome = bridge.handleResult({
+    chunk_id: 3101,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 2.0,
+    end_offset: 4.0,
+    lang: "hi",
+    text: "दर परिवर्तन टेस्ट"
+  });
+
+  assert.equal(outcome.status, "accepted");
+  // Expected calculation: 10.0 + 2.0 * 1.5 = 13.0, 10.0 + 4.0 * 1.5 = 16.0
+  // (NOT 10.0 + 2.0 * 0.75 = 11.5)
+  assert.equal(outcome.cue.start, 13.0);
+  assert.equal(outcome.cue.end, 16.0);
+
+  bridge.destroy();
+});
+
+test("32. F5 (g): SyncBridge: unknown chunk_id without overrideCtx is dropped with reason 'unknown_chunk'", () => {
+  const video = new FakeVideo(0.0);
+  const bridge = new SyncBridge({
+    video,
+    render: () => {},
+    tickMs: 50
+  });
+
+  // Chunk was never registered via registerChunk()
+  const outcome = bridge.handleResult({
+    chunk_id: 9999,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 2.0,
+    lang: "hi",
+    text: "अज्ञात खंड"
+  });
+
+  assert.equal(outcome.status, "dropped");
+  assert.equal(outcome.reason, "unknown_chunk");
+
+  bridge.destroy();
+});
+
+test("33. F5 (h): SyncBridge: onNavigation(meta) archives current video cues; exportArchive() returns previous sessions", () => {
+  const video = new FakeVideo(5.0);
+  const bridge = new SyncBridge({
+    video,
+    render: () => {},
+    tickMs: 10
+  });
+
+  // Session 1: Video 1
+  bridge.registerChunk(3301, { video_start_time: 5.0, playback_rate: 1.0 });
+  const out1 = bridge.handleResult({
+    chunk_id: 3301,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 3.0,
+    lang: "hi",
+    text: "वीडियो १ सबटाइटल"
+  });
+  bridge.engine.markShown(out1.cue, 5.5);
+
+  // Navigate to Video 2 with metadata
+  bridge.onNavigation({ video_id: "yt_video_001", title: "पहला वीडियो" });
+
+  // Current log for new video should be empty
+  assert.equal(bridge.exportLog().length, 0);
+
+  // Archive should hold video 1's cues with metadata
+  const archive = bridge.exportArchive();
+  assert.equal(archive.length, 1);
+  assert.equal(archive[0].meta.video_id, "yt_video_001");
+  assert.equal(archive[0].cues.length, 1);
+  assert.equal(archive[0].cues[0].text, "वीडियो १ सबटाइटल");
+
+  // Session 2: Video 2
+  video.currentTime = 20.0;
+  bridge.registerChunk(3302, { video_start_time: 20.0, playback_rate: 1.0 });
+  const out2 = bridge.handleResult({
+    chunk_id: 3302,
+    epoch: bridge.getEpoch(),
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 4.0,
+    lang: "hi",
+    text: "वीडियो २ सबटाइटल"
+  });
+  bridge.engine.markShown(out2.cue, 21.0);
+
+  // Current log has video 2's cue
+  assert.equal(bridge.exportLog().length, 1);
+  assert.equal(bridge.exportLog()[0].text, "वीडियो २ सबटाइटल");
+
+  // Navigate to Video 3
+  bridge.onNavigation({ video_id: "yt_video_002", title: "दूसरा वीडियो" });
+
+  // Archive now has 2 historical videos
+  const finalArchive = bridge.exportArchive();
+  assert.equal(finalArchive.length, 2);
+  assert.equal(finalArchive[1].meta.video_id, "yt_video_002");
+  assert.equal(finalArchive[1].cues[0].text, "वीडियो २ सबटाइटल");
+
+  bridge.destroy();
+});
+
+test("34. F5 (i): SyncBridge: registerChunk map size is capped and oldest entries are pruned", () => {
+  const video = new FakeVideo(0.0);
+  const bridge = new SyncBridge({
+    video,
+    render: () => {},
+    tickMs: 50
+  });
+
+  bridge._maxChunkMeta = 3; // small cap for testing
+
+  bridge.registerChunk(1, { video_start_time: 1.0 });
+  bridge.registerChunk(2, { video_start_time: 2.0 });
+  bridge.registerChunk(3, { video_start_time: 3.0 });
+  assert.equal(bridge._chunkMetaMap.size, 3);
+
+  // Adding 4th should prune chunk 1
+  bridge.registerChunk(4, { video_start_time: 4.0 });
+  assert.equal(bridge._chunkMetaMap.size, 3);
+  assert.equal(bridge._chunkMetaMap.has(1), false, "Chunk 1 must be pruned");
+  assert.equal(bridge._chunkMetaMap.has(4), true);
+
+  bridge.destroy();
+});
+
+
 
