@@ -16,7 +16,7 @@ export class SyncEngine {
     this.getVideoTime = getVideoTime;
     this.epoch = 1;
     this.isAdActive = false;
-    this.store = new Map(); // chunk_id -> cue
+    this.store = new Map(); // Keyed by (epoch, chunk_id) => `${epoch}:${chunk_id}`
     this.events = [];
   }
 
@@ -49,13 +49,15 @@ export class SyncEngine {
       end = Number((start + 0.1).toFixed(2));
     }
 
-    const chunkId = result.chunk_id;
-    let cue = this.store.get(chunkId);
+    // Cache key is strictly (epoch, chunk_id)
+    const key = `${result.epoch}:${result.chunk_id}`;
+    let cue = this.store.get(key);
     const at = Number(this.getVideoTime().toFixed(2));
 
     if (!cue) {
       cue = {
-        _chunk_id: chunkId,
+        _epoch: result.epoch,
+        _chunk_id: result.chunk_id,
         start,
         end,
         lang: result.lang || (Array.isArray(result.langs) && result.langs[0]) || "hi",
@@ -65,7 +67,7 @@ export class SyncEngine {
         first_shown_at: null,
         revisions: []
       };
-      this.store.set(chunkId, cue);
+      this.store.set(key, cue);
     } else {
       cue.start = start;
       cue.end = end;
@@ -131,9 +133,11 @@ export class SyncEngine {
 
   /**
    * Handles video ad finishing.
-   * Resumes accepting speech results on the main video timeline.
+   * Increments epoch to invalidate any late results generated during the ad,
+   * and resumes accepting speech results on the main video timeline.
    */
   onAdEnd() {
+    this.epoch += 1;
     this.isAdActive = false;
     this.events.push({
       type: "ad_end",
@@ -144,6 +148,12 @@ export class SyncEngine {
 
   /**
    * Retrieves all cues covering the specified video timestamp from cache.
+   * 
+   * Overlapping cues behaviour:
+   * Returns all active cues covering time t (cue.start <= t && t <= cue.end),
+   * sorted chronologically by start ascending, then end ascending.
+   * This allows the overlay renderer to display multiple active lines or pick
+   * the latest specific cue without dropping concurrent subtitles.
    * 
    * @param {number} [t] Video seconds (defaults to current getVideoTime())
    * @returns {Array<Object>} Cues covering t, sorted by start time
@@ -156,7 +166,7 @@ export class SyncEngine {
         visible.push(cue);
       }
     }
-    return visible.sort((a, b) => a.start - b.start);
+    return visible.sort((a, b) => (a.start - b.start) || (a.end - b.end));
   }
 
   /**
@@ -175,23 +185,22 @@ export class SyncEngine {
    * Exports strictly schema-valid cue log JSON matching docs/cue_log.schema.json.
    * Exactly 8 fields per cue: start, end, lang, text, translation, source, first_shown_at, revisions.
    * 
-   * @returns {Array<Object>} Root array of cues sorted by start time
+   * Strict Rule: Only cues that were actually displayed (markShown called) are exported.
+   * Cues where first_shown_at is null (never shown) are excluded from the log.
+   * 
+   * @returns {Array<Object>} Root array of displayed cues sorted by start time
    */
   exportLog() {
     return Array.from(this.store.values())
+      .filter(c => c.first_shown_at !== null && typeof c.first_shown_at === "number")
       .sort((a, b) => a.start - b.start)
       .map(c => {
-        let firstShown = c.first_shown_at;
-        if (firstShown === null || typeof firstShown !== "number") {
-          firstShown = c.revisions.length > 0 ? c.revisions[0].at : c.start;
-        }
-
         let revisions = c.revisions;
         if (!revisions || revisions.length === 0) {
-          revisions = [{ at: firstShown, text: c.text }];
+          revisions = [{ at: c.first_shown_at, text: c.text }];
         }
 
-        // Strictly 8 schema properties only (no _chunk_id or extra fields)
+        // Strictly 8 schema properties only (no _epoch, _chunk_id or extra fields)
         return {
           start: c.start,
           end: c.end,
@@ -199,7 +208,7 @@ export class SyncEngine {
           text: c.text,
           translation: c.translation,
           source: c.source,
-          first_shown_at: firstShown,
+          first_shown_at: c.first_shown_at,
           revisions: revisions.map(r => ({ at: r.at, text: r.text }))
         };
       });
