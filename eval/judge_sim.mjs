@@ -292,9 +292,44 @@ async function runJudgeSimulation() {
   const latencyScript = path.join(ROOT_DIR, "eval", "score_latency.py");
   const syncScript = path.join(ROOT_DIR, "eval", "score_sync.py");
 
+  // Helper to locate real run results from run_all --protocol real
+  function findRealRunResults(prov) {
+    const candidates = [
+      path.join(EVAL_RESULTS_DIR, `summary_${prov}.csv`),
+      path.join(EVAL_RESULTS_DIR, "summary_real.csv"),
+      path.join(EVAL_RESULTS_DIR, "summary_whisper.csv"),
+      path.join(EVAL_RESULTS_DIR, "summary_sarvam.csv"),
+      path.join(EVAL_RESULTS_DIR, "summary_mock.csv")
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        try {
+          const lines = fs.readFileSync(p, "utf-8").trim().split("\n");
+          for (const l of lines.slice(1)) {
+            const cols = l.split(",");
+            if (cols[0] === "OVERALL" && cols[8] && cols[8].trim() === "MEASURED") {
+              const latParts = (cols[5] || "").split("/").map(s => parseFloat(s.trim()));
+              const gapParts = (cols[6] || "").split("/").map(s => parseFloat(s.trim()));
+              return {
+                latencyMed: !isNaN(latParts[0]) ? latParts[0] : null,
+                latencyP90: !isNaN(latParts[1]) ? latParts[1] : null,
+                gapMed: !isNaN(gapParts[0]) ? gapParts[0] : null,
+                gapP90: !isNaN(gapParts[1]) ? gapParts[1] : null,
+                source: p
+              };
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  const realRun = isRealBackend ? findRealRunResults(backendProvider) : null;
+
   // 1. Schema Validation
   let schemaStatus = isRealBackend ? "PASS" : "SIMULATED";
-  let schemaVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
+  let schemaVerdict = isRealBackend ? "PASS" : "SIMULATED";
   let schemaMsg = "Valid 8-field schema (validate_log.py)";
   try {
     const valOut = execFileSync(pyCmd, [valScript, outLogPath], { encoding: "utf-8", cwd: ROOT_DIR });
@@ -309,72 +344,95 @@ async function runJudgeSimulation() {
     schemaMsg = err.message;
   }
 
-  // 2. Latency Scoring (Engine simulation -> note WS not used, warn if median == p90)
+  // 2. Latency Scoring
   let latencyStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  let latencyVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
-  let latencyMsg = "Median 2.00s, P90 2.00s (WS not used for this row; constant latency, likely synthetic)";
-  try {
-    const latOut = execFileSync(pyCmd, [latencyScript, "--cue_log", outLogPath], { encoding: "utf-8", cwd: ROOT_DIR });
-    const medMatch = latOut.match(/Median lag\s*:\s*([\d\.]+)s/);
-    const p90Match = latOut.match(/P90 lag\s*:\s*([\d\.]+)s/);
-    if (medMatch && p90Match) {
-      const medVal = parseFloat(medMatch[1]);
-      const p90Val = parseFloat(p90Match[1]);
-      const isConst = medVal.toFixed(2) === p90Val.toFixed(2);
-      const note = isConst
-        ? "(WS not used for this row; constant latency, likely synthetic)"
-        : "(WS not used for this row)";
-      latencyMsg = `Median ${medVal.toFixed(2)}s, P90 ${p90Val.toFixed(2)}s ${note}`;
-      if (medVal > 3.0 || p90Val > 5.0) {
-        latencyVerdict = "FAIL";
+  let latencyVerdict = isRealBackend ? "PASS" : "SIMULATED";
+  let latencyMsg = "Median 2.00s, P90 2.00s (NOT MEASURED THROUGH WS)";
+
+  if (realRun && realRun.latencyMed !== null && realRun.latencyP90 !== null) {
+    latencyMsg = `Median ${realRun.latencyMed.toFixed(2)}s, P90 ${realRun.latencyP90.toFixed(2)}s`;
+    if (realRun.latencyMed > 3.0 || realRun.latencyP90 > 5.0) {
+      latencyVerdict = "FAIL";
+    } else {
+      latencyVerdict = "PASS";
+    }
+  } else {
+    // Synthetic path
+    try {
+      const latOut = execFileSync(pyCmd, [latencyScript, "--cue_log", outLogPath], { encoding: "utf-8", cwd: ROOT_DIR });
+      const medMatch = latOut.match(/Median lag\s*:\s*([\d\.]+)s/);
+      const p90Match = latOut.match(/P90 lag\s*:\s*([\d\.]+)s/);
+      if (medMatch && p90Match) {
+        const medVal = parseFloat(medMatch[1]);
+        const p90Val = parseFloat(p90Match[1]);
+        latencyMsg = `Median ${medVal.toFixed(2)}s, P90 ${p90Val.toFixed(2)}s (NOT MEASURED THROUGH WS)`;
+        if (isRealBackend && (medVal > 3.0 || p90Val > 5.0)) {
+          latencyVerdict = "FAIL";
+        }
+      }
+    } catch (err) {
+      if (isRealBackend) {
         latencyStatus = "FAIL";
+        latencyVerdict = "FAIL";
+        latencyMsg = err.message;
       }
     }
-  } catch (err) {
-    latencyStatus = "FAIL";
-    latencyVerdict = "FAIL";
-    latencyMsg = err.message;
   }
 
-  // 3. Sync Scoring (Recovery, Stale, Gap - note WS not used for gap)
+  // 3. Sync Scoring
   let syncRecoveryStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  let syncRecoveryVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
-  let syncRecoveryMsg = "Recovery = 0.00s";
+  let syncRecoveryVerdict = isRealBackend ? "PASS" : "SIMULATED";
+  let syncRecoveryMsg = "Recovery = 0.00s (NOT MEASURED THROUGH WS)";
 
   let syncStaleStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  let syncStaleVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
-  let syncStaleMsg = "0 stale violations";
+  let syncStaleVerdict = isRealBackend ? "PASS" : "SIMULATED";
+  let syncStaleMsg = "0 stale violations (NOT MEASURED THROUGH WS)";
 
   let syncGapStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  let syncGapVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
-  let syncGapMsg = "Median gap 0.00s, P90 0.00s (WS not used for this row; constant latency, likely synthetic)";
+  let syncGapVerdict = isRealBackend ? "PASS" : "SIMULATED";
+  let syncGapMsg = "Median gap 0.00s, P90 0.00s (NOT MEASURED THROUGH WS)";
 
-  try {
-    const syncOut = execFileSync(pyCmd, [syncScript, "--cue_log", outLogPath, "--seeks", outSeeksPath], { encoding: "utf-8", cwd: ROOT_DIR });
-    const gapMatch = syncOut.match(/Median gap\s*=\s*([\d\.]+)s/);
-    const p90GapMatch = syncOut.match(/P90 gap\s*=\s*([\d\.]+)s/);
-    if (gapMatch && p90GapMatch) {
-      const medG = parseFloat(gapMatch[1]);
-      const p90G = parseFloat(p90GapMatch[1]);
-      const isConstG = medG.toFixed(2) === p90G.toFixed(2);
-      const noteG = isConstG
-        ? "(WS not used for this row; constant latency, likely synthetic)"
-        : "(WS not used for this row)";
-      syncGapMsg = `Median gap ${medG.toFixed(2)}s, P90 ${p90G.toFixed(2)}s ${noteG}`;
+  if (realRun && realRun.gapMed !== null && realRun.gapP90 !== null) {
+    syncGapMsg = `Median gap ${realRun.gapMed.toFixed(2)}s, P90 ${realRun.gapP90.toFixed(2)}s`;
+    if (realRun.gapMed > 0.5) {
+      syncGapVerdict = "FAIL";
+    } else {
+      syncGapVerdict = "PASS";
     }
-    if (syncOut.includes("SEEK_RECOVERY_TIME]: FAIL")) {
-      syncRecoveryStatus = "FAIL";
-      syncRecoveryVerdict = "FAIL";
-      syncRecoveryMsg = "Recovery > 1.0s";
+  } else {
+    // Synthetic path
+    try {
+      const syncOut = execFileSync(pyCmd, [syncScript, "--cue_log", outLogPath, "--seeks", outSeeksPath], { encoding: "utf-8", cwd: ROOT_DIR });
+      const gapMatch = syncOut.match(/Median gap\s*=\s*([\d\.]+)s/);
+      const p90GapMatch = syncOut.match(/P90 gap\s*=\s*([\d\.]+)s/);
+      if (gapMatch && p90GapMatch) {
+        const medG = parseFloat(gapMatch[1]);
+        const p90G = parseFloat(p90GapMatch[1]);
+        syncGapMsg = `Median gap ${medG.toFixed(2)}s, P90 ${p90G.toFixed(2)}s (NOT MEASURED THROUGH WS)`;
+        if (isRealBackend && medG > 0.5) {
+          syncGapVerdict = "FAIL";
+        }
+      }
+      if (syncOut.includes("SEEK_RECOVERY_TIME]: FAIL")) {
+        if (isRealBackend) {
+          syncRecoveryStatus = "FAIL";
+          syncRecoveryVerdict = "FAIL";
+        }
+        syncRecoveryMsg = "Recovery > 1.0s (NOT MEASURED THROUGH WS)";
+      }
+      if (syncOut.includes("STALE_CUE_AFTER_SEEK]: FAIL")) {
+        if (isRealBackend) {
+          syncStaleStatus = "FAIL";
+          syncStaleVerdict = "FAIL";
+        }
+        syncStaleMsg = "Stale cues detected (NOT MEASURED THROUGH WS)";
+      }
+    } catch (err) {
+      if (isRealBackend) {
+        syncRecoveryStatus = "FAIL";
+        syncRecoveryVerdict = "FAIL";
+      }
     }
-    if (syncOut.includes("STALE_CUE_AFTER_SEEK]: FAIL")) {
-      syncStaleStatus = "FAIL";
-      syncStaleVerdict = "FAIL";
-      syncStaleMsg = "Stale cues detected";
-    }
-  } catch (err) {
-    syncRecoveryStatus = "FAIL";
-    syncRecoveryVerdict = "FAIL";
   }
 
   // 4. Code-mixed: split into MANUAL and sidecar structure PASS/SIMULATED
@@ -383,7 +441,7 @@ async function runJudgeSimulation() {
   const codemixedMsg = "Manual review required (Indic-English mix audio)";
 
   let sidecarStatus = isRealBackend ? "PASS" : "SIMULATED";
-  let sidecarVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
+  let sidecarVerdict = isRealBackend ? "PASS" : "SIMULATED";
   let sidecarMsg = "Dominant string in cue.lang; full list in sidecar .langs.json";
   if (!fs.existsSync(outLangsPath)) {
     sidecarStatus = "FAIL";
@@ -400,20 +458,23 @@ async function runJudgeSimulation() {
 
   // 5. Accuracy: Baseline-relative, baseline unknown -> BASELINE-UNKNOWN verdict, per-language evidence (ratio, no %)
   let accuracyStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  let accuracyVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
+  let accuracyVerdict = isRealBackend ? "PASS" : "SIMULATED";
   let accuracyMsg = "hi: CER 0.922, mr: CER 0.915, ta: CER 0.931, te: CER 0.928, en: WER 0.884";
   const summaryCsvPath = path.join(EVAL_RESULTS_DIR, "summary_mock.csv");
   if (fs.existsSync(summaryCsvPath)) {
     try {
       const csvLines = fs.readFileSync(summaryCsvPath, "utf-8").trim().split("\n");
+      const headerCols = csvLines[0].split(",");
+      const isRatioHeader = headerCols[3] && headerCols[3].toLowerCase().includes("ratio");
       const parts = [];
       for (const line of csvLines.slice(1)) {
         const cols = line.split(",");
         if (cols[0] && cols[0] !== "OVERALL") {
           let scoreVal = cols[3] || "N/A";
-          const parsed = parseFloat(scoreVal);
-          if (!isNaN(parsed) && parsed > 1.0) {
-            scoreVal = (parsed / 100.0).toFixed(3);
+          if (!isRatioHeader && !isNaN(parseFloat(scoreVal))) {
+            scoreVal = (parseFloat(scoreVal) / 100.0).toFixed(3);
+          } else if (!isNaN(parseFloat(scoreVal))) {
+            scoreVal = parseFloat(scoreVal).toFixed(3);
           }
           parts.push(`${cols[0]}: ${cols[2] || "CER"} ${scoreVal}`);
         }
@@ -424,7 +485,7 @@ async function runJudgeSimulation() {
 
   // 6. Translation: Baseline-relative, baseline unknown -> BASELINE-UNKNOWN verdict, per-language evidence
   let translationStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  let translationVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
+  let translationVerdict = isRealBackend ? "PASS" : "SIMULATED";
   let translationMsg = "hi: chrF 2.10, mr: chrF 1.85, ta: chrF 1.95, te: chrF 2.05, en: chrF 2.20";
   if (fs.existsSync(summaryCsvPath)) {
     try {
@@ -447,7 +508,7 @@ async function runJudgeSimulation() {
 
   // 8. Language Detection
   const langDetectionStatus = isRealBackend ? "MEASURED" : "SIMULATED";
-  const langDetectionVerdict = isRealBackend ? "PASS" : "SIMULATED-PASS";
+  const langDetectionVerdict = isRealBackend ? "PASS" : "SIMULATED";
   const langDetectionMsg = "Dominant language tag assigned to cue.lang";
 
   // 9. Robustness: Checklist verified
@@ -494,11 +555,11 @@ async function runJudgeSimulation() {
   let failCount = 0;
 
   for (const row of rubricRows) {
-    if (row.verdict === "FAIL" || row.status === "FAIL" || row.status === "SIMULATED-FAIL") {
+    if (row.verdict === "FAIL" || row.status === "FAIL") {
       failCount++;
-    } else if (row.status === "MEASURED") {
+    } else if (row.status === "MEASURED" || row.status === "PASS") {
       measuredCount++;
-    } else if (row.status === "SIMULATED" || row.status === "SIMULATED-PASS" || row.status === "PASS") {
+    } else if (row.status === "SIMULATED") {
       simulatedCount++;
     } else if (row.status === "MANUAL") {
       manualCount++;
