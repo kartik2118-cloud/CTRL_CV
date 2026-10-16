@@ -47,5 +47,14 @@
     }
   },
 
-  "web_accessible_resources": []
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "offscreen/audio-processor.js"
+      ],
+      "matches": [
+        "https://www.youtube.com/*"
+      ]
+    }
+  ]
 }
