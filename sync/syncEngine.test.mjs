@@ -284,9 +284,9 @@ test("7. Unshown cue is NOT exported in exportLog() (no fallback)", () => {
   assert.equal(exported[0].first_shown_at, 10.5);
 });
 
-test("8. Playback rate conversion: rate=1.5 gives t_video = video_start_time + offset * rate", () => {
-  const engine = new SyncEngine({ getVideoTime: () => 20.0 });
-  const ctx = { video_start_time: 20.0, playback_rate: 1.5 };
+test("8. Playback rate conversion: rate=1.5 gives t_video = video_start_time + offset * rate (e.g. 60.0 + 4.0*1.5 = 66.0)", () => {
+  const engine = new SyncEngine({ getVideoTime: () => 60.0 });
+  const ctx = { video_start_time: 60.0, playback_rate: 1.5 };
 
   const { cue } = engine.onResult({
     chunk_id: 801,
@@ -299,10 +299,10 @@ test("8. Playback rate conversion: rate=1.5 gives t_video = video_start_time + o
   }, ctx);
 
   // Expected:
-  // start = 20.0 + 2.0 * 1.5 = 23.0
-  // end   = 20.0 + 4.0 * 1.5 = 26.0
-  assert.equal(cue.start, 23.0);
-  assert.equal(cue.end, 26.0);
+  // start = 60.0 + 2.0 * 1.5 = 63.0
+  // end   = 60.0 + 4.0 * 1.5 = 66.0
+  assert.equal(cue.start, 63.0);
+  assert.equal(cue.end, 66.0);
 });
 
 test("9. Overlapping cues: different sources coexist sorted by start, while same-source newer epoch replaces older overlapping cue", () => {
@@ -624,4 +624,112 @@ test("15. Real FLEURS clip cue log validation using eval/validate_log.py", (t) =
 
   console.log(`[SyncEngine Export of Real Cues Validation]:\n${outputExported.trim()}`);
   assert.ok(outputExported.includes("PASS"), "SyncEngine export of real cues must PASS schema validation");
+});
+
+test("16. Late-cue policy: end+2s late cue visible + exported with first_shown_at = arrival video time", () => {
+  let currentTime = 14.5; // Arrives at 14.5s (which is end + 2.0s)
+  const engine = new SyncEngine({ getVideoTime: () => currentTime, minHold: 2.0 });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  // Speech range is [10.0s, 12.5s], but arrives late at video time 14.5s
+  const { cue } = engine.onResult({
+    chunk_id: 1601,
+    epoch: 1,
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 2.5,
+    lang: "hi",
+    text: "देर से आने वाला सबटाइटल"
+  }, ctx);
+
+  assert.equal(cue.start, 10.0);
+  assert.equal(cue.end, 12.5);
+  // Arrival video time is 14.5s
+  assert.equal(cue.first_shown_at, 14.5);
+
+  // At arrival video time 14.5s: cue MUST be visible under late-cue policy
+  const visible = engine.getVisibleCues(14.5);
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].text, "देर से आने वाला सबटाइटल");
+
+  // Mark shown idempotently
+  engine.markShown(cue, 14.5);
+  assert.equal(cue.first_shown_at, 14.5);
+
+  // Must be exported in exportLog
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 1);
+  assert.equal(exported[0].text, "देर से आने वाला सबटाइटल");
+  assert.equal(exported[0].start, 10.0);
+  assert.equal(exported[0].end, 12.5);
+  assert.equal(exported[0].first_shown_at, 14.5);
+});
+
+test("17. Late-cue policy: hold ke baad gayab", () => {
+  let currentTime = 14.5;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime, minHold: 2.0 });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  // Speech [10.0s, 12.5s], arrives at 14.5s -> minHold 2.0s holds until 16.5s
+  engine.onResult({
+    chunk_id: 1701,
+    epoch: 1,
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 2.5,
+    lang: "hi",
+    text: "होल्ड टेस्ट"
+  }, ctx);
+
+  // At 15.5s (during hold): still visible
+  assert.equal(engine.getVisibleCues(15.5).length, 1);
+  assert.equal(engine.getVisibleCues(15.5)[0].text, "होल्ड टेस्ट");
+
+  // At 16.49s (end of hold): still visible
+  assert.equal(engine.getVisibleCues(16.49).length, 1);
+
+  // At 16.50s (hold expired, hold ke baad gayab): NOT visible
+  assert.equal(engine.getVisibleCues(16.50).length, 0);
+
+  // At 17.0s: NOT visible
+  assert.equal(engine.getVisibleCues(17.0).length, 0);
+});
+
+test("18. Late-cue policy: seek pe hold clear & seek-back cached cues pe hold nahi", () => {
+  let currentTime = 14.5;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime, minHold: 2.0 });
+  const ctx = { video_start_time: 10.0, playback_rate: 1.0 };
+
+  // Speech [10.0s, 12.5s], arrives late at 14.5s
+  const { cue } = engine.onResult({
+    chunk_id: 1801,
+    epoch: 1,
+    is_final: true,
+    start_offset: 0.0,
+    end_offset: 2.5,
+    lang: "hi",
+    text: "सीक होल्ड टेस्ट"
+  }, ctx);
+
+  assert.equal(engine.getVisibleCues(14.5).length, 1);
+
+  // User seeks forward to 50.0s
+  currentTime = 50.0;
+  engine.onSeek(50.0);
+
+  // At new position 50.0s: hold was cleared, nothing visible
+  assert.equal(engine.getVisibleCues(50.0).length, 0);
+
+  // Seek back to 13.0s (which is > cue.end 12.5s):
+  // Since seek-back cached cues DO NOT have hold, it must NOT be visible at 13.0s!
+  currentTime = 13.0;
+  engine.onSeek(13.0);
+  assert.equal(engine.getVisibleCues(13.0).length, 0, "Cached cues on seek-back must not have hold past end");
+
+  // Seek back into speech range [10.0s, 12.5s) at 11.0s:
+  // Cached cue IS visible strictly during its speech range!
+  currentTime = 11.0;
+  engine.onSeek(11.0);
+  assert.equal(engine.getVisibleCues(11.0).length, 1);
+  assert.equal(engine.getVisibleCues(11.0)[0].text, "सीक होल्ड टेस्ट");
 });

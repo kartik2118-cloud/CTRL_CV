@@ -110,12 +110,15 @@ def check_seek_events(cues: list[dict], seek_events_input) -> dict:
         to_v = float(seek.get("to_video_time", seek.get("seek_to", 0.0)))
         is_seek_back = to_v < from_v
 
+        next_seek = seek_events[s_idx + 1] if s_idx + 1 < len(seek_events) else None
+        next_seek_from = float(next_seek.get("from_video_time", next_seek.get("seek_at", float("inf")))) if next_seek else float("inf")
+
         if is_sidecar:
             ref_seek_time = to_v
         else:
             ref_seek_time = float(seek.get("seek_time", seek.get("seek_at_wall_time", seek.get("wall_time", 0.0))))
 
-        # Collect cues that appeared after this seek was initiated
+        # Collect cues that appeared after this seek was initiated and before the next seek
         post_seek_cues = []
         for c in cues:
             shown_at = float(c.get("first_shown_at", c.get("start", 0.0)))
@@ -124,7 +127,7 @@ def check_seek_events(cues: list[dict], seek_events_input) -> dict:
 
             if is_sidecar:
                 max_valid_v_time = shown_at
-                cue_is_post_seek = shown_at >= to_v
+                cue_is_post_seek = (to_v <= shown_at < next_seek_from)
             else:
                 elapsed_since_seek = shown_at - ref_seek_time
                 max_valid_v_time = to_v + elapsed_since_seek

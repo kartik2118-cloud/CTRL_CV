@@ -11,9 +11,11 @@ export class SyncEngine {
   /**
    * @param {Object} options
    * @param {() => number} options.getVideoTime Function returning current video seconds
+   * @param {number} [options.minHold=2.0] Minimum display hold duration in seconds for late-arriving cues
    */
-  constructor({ getVideoTime = () => 0 } = {}) {
+  constructor({ getVideoTime = () => 0, minHold = 2.0 } = {}) {
     this.getVideoTime = getVideoTime;
+    this.minHold = minHold;
     this.epoch = 1;
     this.isAdActive = false;
     this.store = new Map(); // Keyed by (epoch, chunk_id) => `${epoch}:${chunk_id}`
@@ -29,6 +31,10 @@ export class SyncEngine {
    * If a newly received cue overlaps with existing cues from older epochs with the
    * same source ("stt" or "captions"), the newer epoch replaces the older ones.
    * Within the same epoch, is_final=false then is_final=true updates the same cue.
+   * 
+   * Late-cue policy:
+   * If a live result arrives after its speech end (vTime > end), it is held visible
+   * for minHold seconds (default 2.0s), with first_shown_at = arrival video time.
    * 
    * @param {Object} result Result frame from backend WebSocket
    * @param {Object} ctx Context with video_start_time and playback_rate
@@ -63,6 +69,8 @@ export class SyncEngine {
       cue = {
         _epoch: result.epoch,
         _chunk_id: result.chunk_id,
+        _holdUntil: null,
+        _arrivalVideoTime: null,
         start,
         end,
         lang: result.lang || (Array.isArray(result.langs) && result.langs[0]) || "hi",
@@ -87,6 +95,21 @@ export class SyncEngine {
       text: cue.text
     });
 
+    // Late-cue policy:
+    // If live result arrives after its speech end (at > end):
+    // Hold visible from arrival time for minHold seconds (default 2.0s).
+    // first_shown_at = arrival video time.
+    if (at > end) {
+      cue._arrivalVideoTime = at;
+      cue._holdUntil = Number((at + this.minHold).toFixed(2));
+      if (cue.first_shown_at === null) {
+        cue.first_shown_at = at;
+      }
+    } else {
+      cue._holdUntil = null;
+      cue._arrivalVideoTime = null;
+    }
+
     // Overlap replacement rule:
     // If older epoch cues overlap in time and share the same source, the newer epoch replaces them.
     for (const [existingKey, existingCue] of this.store.entries()) {
@@ -110,12 +133,18 @@ export class SyncEngine {
   /**
    * Handles user seeking to a new video position.
    * Increments epoch to invalidate in-flight requests, but preserves cached cues.
+   * Clears any active late-cue display holds immediately.
    * 
    * @param {number} newTime New video timestamp in seconds
    */
   onSeek(newTime) {
     const fromTime = Number(this.getVideoTime().toFixed(2));
     this.epoch += 1;
+    // Seek immediately clears any late-cue display holds
+    for (const cue of this.store.values()) {
+      cue._holdUntil = null;
+      cue._arrivalVideoTime = null;
+    }
     this.events.push({
       type: "seek",
       from: fromTime,
@@ -142,10 +171,15 @@ export class SyncEngine {
   /**
    * Handles video ad starting.
    * Increments epoch and suppresses any incoming speech results from being displayed.
+   * Clears any active late-cue display holds immediately.
    */
   onAdStart() {
     this.epoch += 1;
     this.isAdActive = true;
+    for (const cue of this.store.values()) {
+      cue._holdUntil = null;
+      cue._arrivalVideoTime = null;
+    }
     this.events.push({
       type: "ad_start",
       epoch_after: this.epoch,
@@ -171,9 +205,12 @@ export class SyncEngine {
   /**
    * Retrieves all cues covering the specified video timestamp from cache.
    * 
-   * Time coverage: start <= t < end (end exclusive).
-   * Boundary rule: at t == end the cue is no longer visible; at the boundary
-   * between two adjacent cues, exactly one cue is active.
+   * Time coverage:
+   * - Regular speech range: start <= t < end (end exclusive).
+   * - Late-cue hold range: arrival <= t < arrival + minHold (if arrived after end).
+   * 
+   * Boundary rule: at t == end (or t == holdUntil) the cue is no longer visible;
+   * at the boundary between two adjacent cues, exactly one cue is active.
    * 
    * Sorted by start ascending, then end ascending.
    * 
@@ -184,7 +221,12 @@ export class SyncEngine {
     const queryTime = typeof t === "number" ? t : this.getVideoTime();
     const visible = [];
     for (const cue of this.store.values()) {
-      if (cue.start <= queryTime && queryTime < cue.end) {
+      const inSpeechRange = cue.start <= queryTime && queryTime < cue.end;
+      const inHoldRange = Boolean(
+        cue._holdUntil && queryTime >= cue._arrivalVideoTime && queryTime < cue._holdUntil
+      );
+
+      if (inSpeechRange || inHoldRange) {
         visible.push(cue);
       }
     }
