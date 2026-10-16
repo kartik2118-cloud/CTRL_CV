@@ -1,0 +1,40 @@
+[
+  {
+    "start": 12.4,
+    "end": 14.1,
+    "lang": "hi",
+    "text": "आज हम पनीर टिक्का बनाएंगे",
+    "translation": "Today we will make paneer tikka",
+    "source": "stt",
+    "first_shown_at": 16.3,
+    "revisions": [
+      {
+        "at": 14.5,
+        "text": "आज हम पनीर"
+      },
+      {
+        "at": 16.3,
+        "text": "आज हम पनीर टिक्का बनाएंगे"
+      }
+    ]
+  },
+  {
+    "start": 15.0,
+    "end": 17.8,
+    "lang": "hi",
+    "text": "यह बहुत स्वादिष्ट बनता है",
+    "translation": "It is made very tasty",
+    "source": "stt",
+    "first_shown_at": 20.1,
+    "revisions": [
+      {
+        "at": 18.0,
+        "text": "यह बहुत"
+      },
+      {
+        "at": 20.1,
+        "text": "यह बहुत स्वादिष्ट बनता है"
+      }
+    ]
+  }
+]

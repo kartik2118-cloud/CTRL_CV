@@ -1,0 +1,11 @@
+jiwer
+sacrebleu
+datasets<4
+soundfile
+librosa
+numpy
+pandas
+python-dotenv
+websockets
+fastapi
+uvicorn
