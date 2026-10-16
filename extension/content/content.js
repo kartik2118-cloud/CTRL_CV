@@ -555,6 +555,20 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
         return false;
       }
 
+      case 'SET_ENABLED': {
+        if (message.enabled === false) {
+          clearSubtitle();
+          if (overlayHostEl) overlayHostEl.style.display = 'none';
+        } else {
+          if (overlayHostEl) overlayHostEl.style.display = 'block';
+        }
+        sendResponse({
+          status: 'ok',
+          enabled: message.enabled
+        });
+        return false;
+      }
+
       case 'UPDATE_STYLE': {
         updateStyle({
           fontSize: message.fontSize,

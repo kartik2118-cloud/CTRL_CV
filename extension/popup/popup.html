@@ -6,37 +6,233 @@
   <title>LiveSub</title>
   <style>
     body {
-      width: 260px;
+      width: 320px;
       margin: 0;
-      padding: 12px 16px;
-      font: 13px/1.5 Arial, sans-serif;
-      background: #1a1a1a;
-      color: #e0e0e0;
+      padding: 14px 16px;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #18181b;
+      color: #f4f4f5;
       box-sizing: border-box;
     }
-    h2 { margin: 0 0 4px; font-size: 15px; color: #ff4444; letter-spacing: 0.5px; }
-    .status { font-size: 11px; color: #aaa; margin: 0 0 10px; }
-    .row { display: flex; gap: 6px; margin-bottom: 6px; }
-    button {
-      flex: 1; padding: 6px 4px; border: 1px solid #444; border-radius: 5px;
-      background: #2a2a2a; color: #eee; cursor: pointer; font-size: 12px;
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
     }
-    button.primary { background: #cc2222; border-color: #cc2222; color: #fff; font-weight: 600; }
-    button:hover { filter: brightness(1.2); }
-    .note { font-size: 10px; color: #555; margin-top: 8px; }
+    h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      color: #ef4444;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    /* Compliance Notice Box */
+    .privacy-notice {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #fca5a5;
+      margin-bottom: 12px;
+    }
+    .privacy-notice strong {
+      color: #fee2e2;
+    }
+    /* Toggle Switch Section */
+    .toggle-section {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #27272a;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+    .toggle-label {
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .switch-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .switch-state-text {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a1a1aa;
+      width: 28px;
+      text-align: right;
+    }
+    .switch-state-text.active {
+      color: #22c55e;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+      margin: 0;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #52525b;
+      transition: .25s;
+      border-radius: 22px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .25s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #22c55e;
+    }
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+    /* Backend URL Configuration */
+    .url-section {
+      background: #27272a;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+    .url-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #a1a1aa;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .url-row {
+      display: flex;
+      gap: 6px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid #3f3f46;
+      border-radius: 4px;
+      background: #18181b;
+      color: #f4f4f5;
+      font-size: 11px;
+      font-family: monospace;
+      box-sizing: border-box;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #ef4444;
+    }
+    button {
+      padding: 6px 10px;
+      border: 1px solid #3f3f46;
+      border-radius: 5px;
+      background: #3f3f46;
+      color: #fafafa;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    button:hover {
+      background: #52525b;
+    }
+    button.primary {
+      background: #ef4444;
+      border-color: #ef4444;
+      color: #ffffff;
+      font-weight: 600;
+    }
+    button.primary:hover {
+      background: #dc2626;
+    }
+    .url-feedback {
+      font-size: 10px;
+      color: #22c55e;
+      margin-top: 4px;
+      height: 12px;
+    }
+    /* Action Buttons */
+    .actions-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .actions-row button {
+      flex: 1;
+      padding: 7px 6px;
+    }
+    .note {
+      font-size: 10px;
+      color: #71717a;
+      margin-top: 8px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <h2>🔴 LiveSub</h2>
-  <p class="status">Overlay spike — all 4 phases active.</p>
-  <div class="row">
+  <div class="header">
+    <h2><span>🔴</span> LiveSub</h2>
+  </div>
+
+  <!-- Mandatory Compliance Notice -->
+  <div class="privacy-notice" id="audio-cloud-notice">
+    <strong>Cloud Audio Notice:</strong> Audio from this tab is streamed to a cloud speech recognition service for live transcription and translation.
+  </div>
+
+  <!-- ON/OFF Switch -->
+  <div class="toggle-section">
+    <div class="toggle-label">Live Streaming & Subtitles</div>
+    <div class="switch-container">
+      <span class="switch-state-text" id="toggle-state-text">ON</span>
+      <label class="switch">
+        <input type="checkbox" id="toggle-active" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Backend WebSocket URL Field -->
+  <div class="url-section">
+    <div class="url-title">Backend WebSocket URL</div>
+    <div class="url-row">
+      <input type="text" id="backend-url" placeholder="ws://localhost:8000/ws" autocomplete="off" spellcheck="false">
+      <button id="btn-save-url">Save</button>
+    </div>
+    <div class="url-feedback" id="url-feedback"></div>
+  </div>
+
+  <!-- Control & Export Buttons -->
+  <div class="actions-row">
     <button class="primary" id="btn-demo">▶ Demo</button>
     <button id="btn-clear">✕ Clear</button>
   </div>
-  <div class="row">
+  <div class="actions-row">
     <button id="btn-export-log">Export cue log</button>
   </div>
-  <p class="note">Style controls (font, colour, position) are in the ⚙ LiveSub panel inside the YouTube player.</p>
+
+  <p class="note">Display styling controls (font, position) are in the ⚙ panel on the video player.</p>
+
   <script src="popup.js"></script>
 </body>
 </html>
