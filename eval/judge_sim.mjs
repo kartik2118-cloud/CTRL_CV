@@ -77,60 +77,39 @@ function generateRealisticCues(fromTime, toTime, startChunkId = 1) {
   return cues;
 }
 
-async function checkBackendReal(url) {
-  if (!url) return false;
-  if (url.includes("localhost") || url.includes("127.0.0.1") || url.includes("0.0.0.0")) {
-    return false;
+async function checkBackendReal(wsUrl) {
+  if (!wsUrl) return { isReal: false, provider: "none", rawInfo: null };
+  let httpUrl = wsUrl.replace(/^ws(s?):\/\//i, "http$1://");
+  if (httpUrl.includes("/ws")) {
+    httpUrl = httpUrl.split("/ws")[0] + "/info";
+  } else if (httpUrl.endsWith("/")) {
+    httpUrl = httpUrl + "info";
+  } else {
+    httpUrl = httpUrl + "/info";
   }
-  return new Promise((resolve) => {
-    try {
-      const ws = new WebSocket(url);
-      const timer = setTimeout(() => {
-        try { ws.close(); } catch (_) {}
-        resolve(false);
-      }, 2500);
 
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: "start", session_id: "probe_real", dual: true }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "ready") {
-            ws.send(JSON.stringify({
-              type: "chunk",
-              chunk_id: 1,
-              epoch: 1,
-              video_start_time: 0.0,
-              playback_rate: 1.0,
-              sample_rate: 16000
-            }));
-            ws.send(new Uint8Array(3200));
-          } else if (msg.type === "result") {
-            clearTimeout(timer);
-            try { ws.close(); } catch (_) {}
-            if (msg.text === "mock" || msg.translation === "mock" || msg.mock === true) {
-              resolve(false);
-            } else {
-              resolve(true);
-            }
-          }
-        } catch (_) {
-          clearTimeout(timer);
-          try { ws.close(); } catch (_) {}
-          resolve(false);
-        }
-      };
-
-      ws.onerror = () => {
-        clearTimeout(timer);
-        resolve(false);
-      };
-    } catch (_) {
-      resolve(false);
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const resp = await fetch(httpUrl, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!resp.ok) {
+      console.log(`[Backend Info Probe] GET ${httpUrl} failed with HTTP status ${resp.status}`);
+      return { isReal: false, provider: "http_error", rawInfo: null };
     }
-  });
+    const info = await resp.json();
+    console.log(`\n[Backend Info Probe] GET ${httpUrl} returned:`);
+    console.log(JSON.stringify(info, null, 2));
+    const stt = (info.stt_provider || "mock").toLowerCase();
+    const isLocal = wsUrl.includes("localhost") || wsUrl.includes("127.0.0.1") || wsUrl.includes("0.0.0.0");
+    // Label rows SIMULATED when provider is "mock" or the host is localhost with a mock provider.
+    // MEASURED only when the provider is a real STT (whisper or sarvam).
+    const isReal = (stt === "whisper" || stt === "sarvam");
+    return { isReal, provider: stt, rawInfo: info };
+  } catch (err) {
+    console.log(`\n[Backend Info Probe] Could not query ${httpUrl}: ${err.message}`);
+    return { isReal: false, provider: "unreachable", rawInfo: null };
+  }
 }
 
 async function runJudgeSimulation() {
@@ -143,14 +122,16 @@ async function runJudgeSimulation() {
     }
   }
 
-  const isRealBackend = await checkBackendReal(wsUrl);
+  const probe = await checkBackendReal(wsUrl);
+  const isRealBackend = probe.isReal;
+  const backendProvider = probe.provider;
 
   console.log("=======================================================");
   console.log("STARTING JUDGE ACCEPTANCE SIMULATOR (Task T7)");
   if (isRealBackend) {
-    console.log(`Target WebSocket URL: ${wsUrl} (REAL backend verified)`);
+    console.log(`Target WebSocket URL: ${wsUrl} (MEASURED: real STT provider '${backendProvider}')`);
   } else {
-    console.log(`Target WebSocket URL: ${wsUrl || "None"} (SIMULATED mode: local mock / synthetic)`);
+    console.log(`Target WebSocket URL: ${wsUrl || "None"} (SIMULATED mode: provider '${backendProvider}')`);
   }
   console.log("=======================================================");
   console.log("Playback Schedule (The Judge's Acceptance Script):");
@@ -429,7 +410,12 @@ async function runJudgeSimulation() {
       for (const line of csvLines.slice(1)) {
         const cols = line.split(",");
         if (cols[0] && cols[0] !== "OVERALL") {
-          parts.push(`${cols[0]}: ${cols[2] || "CER"} ${cols[3] || "N/A"}`);
+          let scoreVal = cols[3] || "N/A";
+          const parsed = parseFloat(scoreVal);
+          if (!isNaN(parsed) && parsed > 1.0) {
+            scoreVal = (parsed / 100.0).toFixed(3);
+          }
+          parts.push(`${cols[0]}: ${cols[2] || "CER"} ${scoreVal}`);
         }
       }
       if (parts.length > 0) accuracyMsg = parts.join(", ");

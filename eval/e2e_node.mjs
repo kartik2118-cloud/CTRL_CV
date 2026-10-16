@@ -141,9 +141,10 @@ async function run() {
     await new Promise(r => setTimeout(r, 80));
 
     const blockSizeBytes = 1600 * 2; // 100 ms at 16 kHz = 3200 bytes
+    const totalBlocks = Math.floor(pcmRaw.length / blockSizeBytes); // 82 blocks = 8.2s
 
     // ─── Stream 1: Rate 1.0 ──────────────────────────────────────────────────────
-    console.log('\n[E2E Node] Streaming pass 1: Playback Rate 1.0x (video starting at 0.0s)...');
+    console.log(`\n[E2E Node] Streaming pass 1: Playback Rate 1.0x (${totalBlocks} blocks, 8.2s of audio starting at 0.0s)...`);
     videoTime = 0.0;
     videoRate = 1.0;
     client.updateVideoObservation({
@@ -156,20 +157,19 @@ async function run() {
       ad_state: 'main_video'
     });
 
-    const pass1Blocks = 25; // 2.5 seconds
-    for (let b = 0; b < pass1Blocks; b++) {
+    for (let b = 0; b < totalBlocks; b++) {
       const slice = pcmRaw.subarray(b * blockSizeBytes, (b + 1) * blockSizeBytes);
       const pcm16 = new Int16Array(slice.buffer, slice.byteOffset, slice.length / 2);
       client.feedAudioBlock(pcm16, 0.1);
       videoTime = Number((videoTime + 0.1).toFixed(2));
-      await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 12));
     }
 
-    // Wait for pass 1 backend results
-    await new Promise(r => setTimeout(r, 200));
+    // Wait for pass 1 backend results to arrive
+    await new Promise(r => setTimeout(r, 350));
 
     // ─── Stream 2: Rate 1.5 with Seek to 50.0s ────────────────────────────────────
-    console.log('\n[E2E Node] Streaming pass 2: Playback Rate 1.5x (video seeking to 50.0s)...');
+    console.log(`\n[E2E Node] Streaming pass 2: Playback Rate 1.5x (${totalBlocks} blocks, 8.2s of audio seeking to 50.0s)...`);
     videoTime = 50.0;
     videoRate = 1.5;
 
@@ -188,17 +188,16 @@ async function run() {
       ad_state: 'main_video'
     });
 
-    const pass2Blocks = 25; // 2.5 seconds
-    for (let b = 0; b < pass2Blocks; b++) {
-      const slice = pcmRaw.subarray((b + pass1Blocks) * blockSizeBytes, (b + pass1Blocks + 1) * blockSizeBytes);
+    for (let b = 0; b < totalBlocks; b++) {
+      const slice = pcmRaw.subarray(b * blockSizeBytes, (b + 1) * blockSizeBytes);
       const pcm16 = new Int16Array(slice.buffer, slice.byteOffset, slice.length / 2);
       client.feedAudioBlock(pcm16, 0.1);
       videoTime = Number((videoTime + 0.1 * 1.5).toFixed(2));
-      await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 12));
     }
 
-    // Wait for pass 2 backend results
-    await new Promise(r => setTimeout(r, 250));
+    // Wait for pass 2 backend results to arrive
+    await new Promise(r => setTimeout(r, 350));
 
     // ─── Export Cue Log & Verification ──────────────────────────────────────────
     fs.mkdirSync(RESULTS_DIR, { recursive: true });

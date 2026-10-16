@@ -68,11 +68,35 @@ def detect_speech_onset(audio_path: Path) -> float:
     return 0.0
 
 
+def probe_backend_info(ws_url: str) -> dict:
+    """Queries backend /info HTTP endpoint to inspect active STT/translation providers."""
+    http_url = ws_url.replace("ws://", "http://").replace("wss://", "https://")
+    if "/ws" in http_url:
+        info_url = http_url.split("/ws")[0] + "/info"
+    elif http_url.endswith("/"):
+        info_url = http_url + "info"
+    else:
+        info_url = http_url + "/info"
+
+    import urllib.request
+    try:
+        req = urllib.request.Request(info_url, headers={"User-Agent": "CtrlCV-Eval"})
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            print(f"\n[Backend Info Probe] GET {info_url} returned:")
+            print(json.dumps(data, indent=2))
+            return data
+    except Exception as e:
+        print(f"\n[Backend Info Probe] Could not query {info_url}: {e}")
+        return {}
+
+
 async def evaluate_clip(
     ref_item: dict,
     url: str,
     chunk_ms: int = 1000,
-    fast: bool = False
+    fast: bool = False,
+    protocol: str = "contract_v01"
 ) -> dict:
     """Streams a single clip and collects text, translation, and cue latency data."""
     cid = ref_item["id"]
@@ -96,6 +120,7 @@ async def evaluate_clip(
         lang=lang_short,
         chunk_ms=chunk_ms,
         realtime=(not fast),
+        protocol=protocol,
         output_path=None,
         verbose=False
     )
@@ -130,7 +155,8 @@ async def evaluate_all_clips(
     url: str,
     chunk_ms: int = 1000,
     fast: bool = False,
-    concurrency: int = 2
+    concurrency: int = 2,
+    protocol: str = "contract_v01"
 ) -> tuple[list[dict], list[dict]]:
     """Runs clip evaluations concurrently bounded by concurrency semaphore."""
     semaphore = asyncio.Semaphore(concurrency)
@@ -143,7 +169,7 @@ async def evaluate_all_clips(
             print(f"[{idx:02d}/{total_clips:02d}] Streaming {cid} ({lang})...", flush=True)
             t0 = time.time()
             try:
-                res = await evaluate_clip(ref, url=url, chunk_ms=chunk_ms, fast=fast)
+                res = await evaluate_clip(ref, url=url, chunk_ms=chunk_ms, fast=fast, protocol=protocol)
                 elapsed = time.time() - t0
                 print(f"[{idx:02d}/{total_clips:02d}] FINISHED {cid} ({len(res['cues'])} cues, {elapsed:.2f}s)", flush=True)
                 return res
@@ -182,7 +208,8 @@ def run_evaluation(
     concurrency: int = 2,
     max_clips: int | None = None,
     langs: str | None = None,
-    run_label: str = "SIMULATED"
+    run_label: str = "SIMULATED",
+    protocol: str = "contract_v01"
 ):
     """Main evaluation routine."""
     with open(references_path, "r", encoding="utf-8") as f:
@@ -220,7 +247,8 @@ def run_evaluation(
             url=url,
             chunk_ms=chunk_ms,
             fast=fast,
-            concurrency=concurrency
+            concurrency=concurrency,
+            protocol=protocol
         )
     )
     total_time = round(time.time() - start_eval_time, 2)
@@ -382,6 +410,7 @@ def run_evaluation(
 def main():
     parser = argparse.ArgumentParser(description="CtrlCV Batch Evaluation Runner (eval/run_all.py)")
     parser.add_argument("--url", "--ws_url", dest="ws_url", type=str, default=None, help="WebSocket server URL")
+    parser.add_argument("--protocol", type=str, default="contract_v01", choices=["contract_v01", "real"], help="Protocol adapter: contract_v01 or real (default: contract_v01)")
     parser.add_argument("--engine_label", type=str, default="mock", help="Engine label (e.g., mock, whisper)")
     parser.add_argument("--references", type=str, default=str(DEFAULT_REFS_PATH), help="Path to references.json")
     parser.add_argument("--chunk_ms", type=int, default=1000, help="Chunk duration in ms")
@@ -402,11 +431,19 @@ def main():
         fast_mode = False
 
     ws_url = args.ws_url or os.environ.get("CTRLCV_WS_URL") or "ws://127.0.0.1:8000/ws"
-    is_localhost = ("localhost" in ws_url or "127.0.0.1" in ws_url)
-    is_mock_label = (args.engine_label.lower() == "mock")
-    # Backend sirf tab REAL maano jab URL localhost/127.0.0.1 na ho aur mock signature na ho
-    is_real = (not is_localhost and not is_mock_label and args.measured)
-    run_label = "MEASURED" if is_real else "SIMULATED"
+
+    # Backend /info probe for mock detection
+    info_data = probe_backend_info(ws_url)
+    stt_prov = str(info_data.get("stt_provider", "mock")).lower()
+    is_real_stt = stt_prov in ("whisper", "sarvam")
+    is_localhost = ("localhost" in ws_url or "127.0.0.1" in ws_url or "0.0.0.0" in ws_url)
+
+    # Label rows SIMULATED when provider is "mock" or the host is localhost with a mock provider.
+    # MEASURED only when the provider is a real STT (whisper or sarvam).
+    if is_real_stt and not (is_localhost and stt_prov == "mock"):
+        run_label = "MEASURED"
+    else:
+        run_label = "SIMULATED"
 
     run_evaluation(
         url=ws_url,
@@ -417,7 +454,8 @@ def main():
         concurrency=args.concurrency,
         max_clips=args.max_clips,
         langs=args.langs,
-        run_label=run_label
+        run_label=run_label,
+        protocol=args.protocol
     )
 
 

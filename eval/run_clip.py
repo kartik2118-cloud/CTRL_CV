@@ -71,6 +71,7 @@ async def stream_clip(
     seek_at: float | None = None,
     seek_to: float | None = None,
     no_epoch_drop: bool = False,
+    protocol: str = "contract_v01",
     output_path: Path | None = DEFAULT_OUTPUT,
     verbose: bool = True
 ) -> list[dict]:
@@ -81,7 +82,7 @@ async def stream_clip(
     chunk_duration_sec = chunk_ms / 1000.0
     total_chunks = len(chunks)
     if verbose:
-        print(f"[Client] Total duration: {total_dur:.2f}s, {total_chunks} chunks of {chunk_ms}ms (mode: {'realtime' if realtime else 'fast'})")
+        print(f"[Client] Total duration: {total_dur:.2f}s, {total_chunks} chunks of {chunk_ms}ms (mode: {'realtime' if realtime else 'fast'}, protocol: {protocol})")
 
     sent_chunks = {}
     cues = []
@@ -98,20 +99,37 @@ async def stream_clip(
         print(f"[Client] Connecting to WebSocket: {url} ...")
     async with websockets.connect(url) as ws:
         session_id = f"eval_session_{int(time.time())}"
-        start_frame = {
-            "type": "start",
-            "session_id": session_id,
-            "translate_to": "en",
-            "lang_hint": lang,
-            "dual": True
-        }
-        await ws.send(json.dumps(start_frame))
-        resp = await ws.recv()
-        resp_data = json.loads(resp)
-        if verbose:
-            print(f"[Client] Handshake response: {resp_data}")
-        if resp_data.get("type") != "ready":
-            raise RuntimeError(f"Unexpected response to start frame: {resp_data}")
+
+        if protocol == "real":
+            hello_frame = {
+                "type": "hello",
+                "client_id": session_id,
+                "lang": lang,
+                "target_lang": "en"
+            }
+            await ws.send(json.dumps(hello_frame))
+            resp = await ws.recv()
+            resp_data = json.loads(resp)
+            if verbose:
+                print(f"[Client] Real protocol handshake response: {resp_data}")
+            if resp_data.get("type") != "hello_ack":
+                raise RuntimeError(f"Unexpected response to hello frame: {resp_data}")
+            current_epoch = resp_data.get("epoch", current_epoch)
+        else:
+            start_frame = {
+                "type": "start",
+                "session_id": session_id,
+                "translate_to": "en",
+                "lang_hint": lang,
+                "dual": True
+            }
+            await ws.send(json.dumps(start_frame))
+            resp = await ws.recv()
+            resp_data = json.loads(resp)
+            if verbose:
+                print(f"[Client] Handshake response: {resp_data}")
+            if resp_data.get("type") != "ready":
+                raise RuntimeError(f"Unexpected response to start frame: {resp_data}")
 
         wall_start_time = time.time()
         base_video_time = 0.0
@@ -125,7 +143,22 @@ async def stream_clip(
                     raw_msg = await ws.recv()
                     arr_time = time.time()
                     res = json.loads(raw_msg)
-                    if res.get("type") == "result":
+                    msg_type = res.get("type")
+
+                    if msg_type == "seek_ack":
+                        if verbose:
+                            print(f"[Client] Backend seek_ack: epoch={res.get('epoch')}, video_time={res.get('video_time')}s")
+                        continue
+                    elif msg_type == "error":
+                        if verbose:
+                            print(f"[Client] Backend error frame: {res.get('detail')}")
+                        continue
+                    elif msg_type == "config_ack":
+                        if verbose:
+                            print(f"[Client] Backend config_ack: rate={res.get('playback_rate')}")
+                        continue
+
+                    if msg_type in ("result", "subtitle"):
                         res_epoch = res.get("epoch", 0)
                         cid = res.get("chunk_id")
 
@@ -143,18 +176,23 @@ async def stream_clip(
 
                         chunk_meta = sent_chunks.get((res_epoch, cid))
                         if not chunk_meta:
-                            if verbose:
-                                print(f"[Client] Warning: Received result for unknown chunk {cid} (epoch={res_epoch})")
-                            continue
+                            chunk_meta = next((v for (e, c), v in sent_chunks.items() if c == cid), None)
 
-                        v_start = chunk_meta["video_start_time"]
-                        rate = chunk_meta["playback_rate"]
+                        v_start = chunk_meta["video_start_time"] if chunk_meta else 0.0
+                        rate = chunk_meta["playback_rate"] if chunk_meta else playback_rate
 
-                        # Time conversion formula (docs/contract.md section 4)
-                        c_start = v_start + res.get("start_offset", 0.0) * rate
-                        c_end = v_start + res.get("end_offset", chunk_duration_sec) * rate
-                        if c_end <= c_start:
-                            c_end = c_start + 0.1
+                        if protocol == "real":
+                            # Results are subtitle frames with ABSOLUTE start/end (video seconds). Do not convert them again.
+                            c_start = float(res.get("start", 0.0))
+                            c_end = float(res.get("end", 0.0))
+                            if c_end <= c_start:
+                                c_end = c_start + 0.1
+                        else:
+                            # Time conversion formula (docs/contract.md section 4)
+                            c_start = v_start + res.get("start_offset", 0.0) * rate
+                            c_end = v_start + res.get("end_offset", chunk_duration_sec) * rate
+                            if c_end <= c_start:
+                                c_end = c_start + 0.1
 
                         # Convert wall-clock arrival to video timeline
                         # After a seek: video_time = seek_to + (wall_now - seek_wall_time) * playback_rate
@@ -162,12 +200,16 @@ async def stream_clip(
                             elapsed_after_anchor = arr_time - last_seek_wall_time
                             first_shown = last_seek_to + elapsed_after_anchor * rate
                         else:
-                            proc_latency = arr_time - chunk_meta["sent_wall_time"]
+                            sent_w = chunk_meta["sent_wall_time"] if chunk_meta else arr_time
+                            proc_latency = arr_time - sent_w
                             first_shown = v_start + chunk_duration_sec + proc_latency * rate
 
-                        text = res.get("text", "")
-                        translation = res.get("translation", "")
-                        res_lang = res.get("lang", lang)
+                        text = res.get("text", "") or ""
+                        translation = res.get("translation", "") or ""
+                        res_lang = res.get("lang", lang) or lang
+                        res_source = res.get("source", "stt")
+                        if res_source not in ("stt", "captions"):
+                            res_source = "stt"
 
                         cue_entry = {
                             "start": round(c_start, 2),
@@ -175,7 +217,7 @@ async def stream_clip(
                             "lang": res_lang,
                             "text": text,
                             "translation": translation,
-                            "source": "stt",
+                            "source": res_source,
                             "first_shown_at": round(first_shown, 2),
                             "revisions": [
                                 {
@@ -218,6 +260,13 @@ async def stream_clip(
                         "epoch_after": current_epoch
                     })
                     print(f"\n[Client] *** SEEK EVENT TRIGGERED: video {seek_at}s -> {seek_to}s at wall_time={seek_wall}s | New epoch={current_epoch} ***\n")
+                    if protocol == "real":
+                        seek_frame = {
+                            "type": "seek",
+                            "video_time": float(seek_to),
+                            "epoch": current_epoch
+                        }
+                        await ws.send(json.dumps(seek_frame))
 
             v_start = current_video_time
 
@@ -235,15 +284,26 @@ async def stream_clip(
                 "sent_wall_time": sent_wall
             }
 
-            # Audio chunk: JSON header followed by binary PCM frame
-            header = {
-                "type": "chunk",
-                "chunk_id": cid,
-                "epoch": current_epoch,
-                "video_start_time": v_start,
-                "playback_rate": playback_rate,
-                "sample_rate": 16000
-            }
+            if protocol == "real":
+                # Real protocol: chunk_meta {type, chunk_id, video_start, playback_rate, epoch, duration} followed by binary PCM
+                header = {
+                    "type": "chunk_meta",
+                    "chunk_id": cid,
+                    "video_start": round(v_start, 3),
+                    "playback_rate": playback_rate,
+                    "epoch": current_epoch,
+                    "duration": round(chunk_duration_sec, 3)
+                }
+            else:
+                # contract_v01 mock protocol
+                header = {
+                    "type": "chunk",
+                    "chunk_id": cid,
+                    "epoch": current_epoch,
+                    "video_start_time": v_start,
+                    "playback_rate": playback_rate,
+                    "sample_rate": 16000
+                }
             await ws.send(json.dumps(header))
             await ws.send(chunk_bytes)
             if verbose:
@@ -289,8 +349,8 @@ async def stream_clip(
             json.dump(sidecar_data, f, ensure_ascii=False, indent=2)
 
         if verbose:
-            print(f"\n[Client DONE] Exported {len(cues)} cues to {out_p}")
-            print(f"[Client DONE] Exported seek sidecar to {sidecar_path}")
+            print(f"\n[Client EXPORT] Exported {len(cues)} cues to {out_p}")
+            print(f"[Client EXPORT] Exported seek sidecar to {sidecar_path}")
             print(f"[Client SUMMARY] Stale results dropped count: {stale_dropped_count} (chunks: {stale_dropped_chunk_ids})")
 
     return cues
@@ -302,6 +362,7 @@ def main():
     parser.add_argument("--lang", type=str, default="hi", help="Language code (default: hi)")
     parser.add_argument("--url", type=str, default="ws://127.0.0.1:8000/ws", help="WebSocket URL")
     parser.add_argument("--chunk_ms", type=int, default=1000, help="Chunk duration in ms (default: 1000)")
+    parser.add_argument("--protocol", type=str, default="contract_v01", choices=["contract_v01", "real"], help="Protocol adapter: contract_v01 or real (default: contract_v01)")
     parser.add_argument("--realtime", action="store_true", default=True, help="Stream in real-time (sleep between chunks)")
     parser.add_argument("--fast", action="store_true", help="Stream chunks as fast as possible without sleep")
     parser.add_argument("--seek_at", type=float, default=None, help="Video time in seconds to trigger a seek")
@@ -331,6 +392,7 @@ def main():
         seek_at=args.seek_at,
         seek_to=args.seek_to,
         no_epoch_drop=args.no_epoch_drop,
+        protocol=args.protocol,
         output_path=out_p
     ))
 
