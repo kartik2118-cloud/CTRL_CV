@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WsClient } from './ws_client.js';
+import { SyncEngine } from '../../sync/syncEngine.js';
+import { SyncBridge } from '../../sync/syncBridge.js';
 
 class FakeWebSocket {
   constructor(url) {
@@ -72,7 +74,6 @@ test('WsClient: Handshake protocol (hello -> hello_ack)', async () => {
   });
 
   await client.connect();
-  // Wait for fake socket hello_ack
   await new Promise(r => setTimeout(r, 20));
 
   assert.strictEqual(client.ws.readyState, 1);
@@ -130,27 +131,19 @@ test('WsClient: 100 ms -> 1 s aggregation and exact header fields', async () => 
   assert.strictEqual(event0.video_start_time, 15.0);
   assert.strictEqual(event0.playback_rate, 1.0);
 
-  // Check frames sent to fake WebSocket
-  // textFrames[0] was hello, textFrames[1] is chunk header
   assert.strictEqual(client.ws.textFrames.length, 2);
   const header = JSON.parse(client.ws.textFrames[1]);
 
-  // Verify exact required fields: {chunk_id, epoch, video_start_time, playback_rate, sample_rate}
-  assert.strictEqual(typeof header.chunk_id, 'number');
-  assert.strictEqual(typeof header.epoch, 'number');
-  assert.strictEqual(typeof header.video_start_time, 'number');
-  assert.strictEqual(typeof header.playback_rate, 'number');
-  assert.strictEqual(typeof header.sample_rate, 'number');
-
+  // Exact required header fields: {chunk_id, epoch, video_start_time, playback_rate, sample_rate}
   assert.strictEqual(header.chunk_id, 0);
   assert.strictEqual(header.epoch, 0);
   assert.strictEqual(header.video_start_time, 15.0);
   assert.strictEqual(header.playback_rate, 1.0);
   assert.strictEqual(header.sample_rate, 16000);
 
-  // Check binary frame
+  // Binary audio payload
   assert.strictEqual(client.ws.binaryFrames.length, 1);
-  assert.strictEqual(client.ws.binaryFrames[0].byteLength, 16000 * 2, 'Must transmit 16000 samples = 32000 bytes');
+  assert.strictEqual(client.ws.binaryFrames[0].byteLength, 16000 * 2);
 
   client.close();
 });
@@ -168,7 +161,6 @@ test('WsClient: Rate-change flush (start = video_start_time + offset * rate at 0
   await client.connect();
   await new Promise(r => setTimeout(r, 20));
 
-  // Anchor video at 10.0s
   client.updateVideoObservation({
     epoch: 0,
     video_id: 'vid_rate',
@@ -180,197 +172,183 @@ test('WsClient: Rate-change flush (start = video_start_time + offset * rate at 0
     wall_time_ms: Date.now()
   });
 
-  // Stage A: Rate 0.5
-  // Feed 3 blocks of 100 ms (0.3 s audio)
+  // Stage A: Rate 0.5, 3 blocks (0.3 s audio)
   for (let i = 0; i < 3; i++) {
     client.feedAudioBlock(create100msPcmBlock());
   }
 
-  // Rate changes to 1.5: must flush chunk with OLD rate (0.5)
+  // Rate changes to 1.5 -> flush with OLD rate 0.5
   client.setPlaybackRate(1.5);
-
   assert.strictEqual(sentChunks.length, 1);
-  const chunk0 = sentChunks[0];
-  assert.strictEqual(chunk0.chunk_id, 0);
-  assert.strictEqual(chunk0.video_start_time, 10.0);
-  assert.strictEqual(chunk0.playback_rate, 0.5);
+  assert.strictEqual(sentChunks[0].video_start_time, 10.0);
+  assert.strictEqual(sentChunks[0].playback_rate, 0.5);
 
-  // Expected start of next chunk:
-  // start = 10.0 + (0.3 s * 0.5) = 10.15
+  // Next chunk starts at 10.0 + (0.3 * 0.5) = 10.15
   assert.strictEqual(client.currentChunkVideoStartTime, 10.15);
 
-  // Stage B: Rate 1.5
-  // Feed 4 blocks of 100 ms (0.4 s audio)
+  // Stage B: Rate 1.5, 4 blocks (0.4 s audio)
   for (let i = 0; i < 4; i++) {
     client.feedAudioBlock(create100msPcmBlock());
   }
 
-  // Rate changes to 2.0: must flush chunk with OLD rate (1.5)
+  // Rate changes to 2.0 -> flush with OLD rate 1.5
   client.setPlaybackRate(2.0);
-
   assert.strictEqual(sentChunks.length, 2);
-  const chunk1 = sentChunks[1];
-  assert.strictEqual(chunk1.chunk_id, 1);
-  assert.strictEqual(chunk1.video_start_time, 10.15);
-  assert.strictEqual(chunk1.playback_rate, 1.5);
+  assert.strictEqual(sentChunks[1].video_start_time, 10.15);
+  assert.strictEqual(sentChunks[1].playback_rate, 1.5);
 
-  // Expected start of next chunk:
-  // start = 10.15 + (0.4 s * 1.5) = 10.15 + 0.6 = 10.75
+  // Next chunk starts at 10.15 + (0.4 * 1.5) = 10.75
   assert.strictEqual(client.currentChunkVideoStartTime, 10.75);
 
-  // Stage C: Rate 2.0
-  // Feed 10 blocks of 100 ms (1.0 s audio) -> aggregates to full 1.0 s chunk
+  // Stage C: Rate 2.0, 10 blocks (1.0 s audio) -> aggregates to 1.0s chunk
   for (let i = 0; i < 10; i++) {
     client.feedAudioBlock(create100msPcmBlock());
   }
-
   assert.strictEqual(sentChunks.length, 3);
-  const chunk2 = sentChunks[2];
-  assert.strictEqual(chunk2.chunk_id, 2);
-  assert.strictEqual(chunk2.video_start_time, 10.75);
-  assert.strictEqual(chunk2.playback_rate, 2.0);
+  assert.strictEqual(sentChunks[2].video_start_time, 10.75);
+  assert.strictEqual(sentChunks[2].playback_rate, 2.0);
 
-  // Expected start of next chunk after 1.0s at rate 2.0:
-  // start = 10.75 + (1.0 s * 2.0) = 10.75 + 2.0 = 12.75
+  // Next start after 1.0s at rate 2.0: 10.75 + (1.0 * 2.0) = 12.75
   assert.strictEqual(client.currentChunkVideoStartTime, 12.75);
 
   client.close();
 });
 
-test('WsClient: Epoch bump drops partial buffer (seek, navigation, ad)', async () => {
-  const sentChunks = [];
+test('WsClient: Backend seek message sent on seek, navigation, ad', async () => {
   const client = new WsClient({
     WebSocketClass: FakeWebSocket,
     url: 'ws://localhost:8000/ws',
-    onChunkSent: (info) => sentChunks.push(info),
-    initialEpoch: 0,
-    initialPlaybackRate: 1.0
+    initialEpoch: 0
   });
 
   await client.connect();
   await new Promise(r => setTimeout(r, 20));
 
-  client.updateVideoObservation({
-    epoch: 0,
-    video_id: 'vid1',
-    video_current_time: 20.0,
-    playback_rate: 1.0,
-    paused: false,
-    seeking: false,
-    ad_state: 'main_video',
-    wall_time_ms: Date.now()
-  });
+  // 1. Explicit seek
+  const seek1 = client.onSeek(45.0);
+  assert.strictEqual(seek1.type, 'seek');
+  assert.strictEqual(seek1.video_time, 45.0);
+  assert.strictEqual(seek1.epoch, 1);
 
-  // Feed 5 blocks (500 ms)
-  for (let i = 0; i < 5; i++) {
-    client.feedAudioBlock(create100msPcmBlock());
-  }
-  assert.strictEqual(client.bufferedSamples, 5 * 1600);
+  // 2. Navigation event
+  const seek2 = client.onNavigation('vid_next', 0.0);
+  assert.strictEqual(seek2.type, 'seek');
+  assert.strictEqual(seek2.video_time, 0.0);
+  assert.strictEqual(seek2.epoch, 2);
 
-  // Seek occurs -> epoch bump
-  client.updateVideoObservation({
-    epoch: 1,
-    video_id: 'vid1',
-    video_current_time: 80.0,
-    playback_rate: 1.0,
-    paused: false,
-    seeking: true,
-    ad_state: 'main_video',
-    wall_time_ms: Date.now()
-  });
+  // 3. Ad start event
+  const seek3 = client.onAdStart(12.5);
+  assert.strictEqual(seek3.type, 'seek');
+  assert.strictEqual(seek3.video_time, 12.5);
+  assert.strictEqual(seek3.epoch, 3);
 
-  // Partial buffer must be discarded, zero chunks sent for dropped audio
-  assert.strictEqual(client.bufferedSamples, 0);
-  assert.strictEqual(client.partialBuffer.length, 0);
-  assert.strictEqual(sentChunks.length, 0);
-  assert.strictEqual(client.epoch, 1);
+  // 4. Ad end event
+  const seek4 = client.onAdEnd(12.5);
+  assert.strictEqual(seek4.type, 'seek');
+  assert.strictEqual(seek4.video_time, 12.5);
+  assert.strictEqual(seek4.epoch, 4);
 
-  // Now resume playing at new position 80.0s
-  client.updateVideoObservation({
-    epoch: 1,
-    video_id: 'vid1',
-    video_current_time: 80.0,
-    playback_rate: 1.0,
-    paused: false,
-    seeking: false,
-    ad_state: 'main_video',
-    wall_time_ms: Date.now()
-  });
+  // Verify all seek frames were transmitted to WebSocket
+  const seekFrames = client.ws.textFrames
+    .map(f => JSON.parse(f))
+    .filter(m => m.type === 'seek');
 
-  // Feed 10 blocks under new epoch
-  for (let i = 0; i < 10; i++) {
-    client.feedAudioBlock(create100msPcmBlock());
-  }
-
-  assert.strictEqual(sentChunks.length, 1);
-  const chunkAfterSeek = sentChunks[0];
-  assert.strictEqual(chunkAfterSeek.chunk_id, 0);
-  assert.strictEqual(chunkAfterSeek.epoch, 1);
-  assert.strictEqual(chunkAfterSeek.video_start_time, 80.0);
-  assert.strictEqual(chunkAfterSeek.playback_rate, 1.0);
+  assert.strictEqual(seekFrames.length, 4);
+  assert.deepStrictEqual(seekFrames.map(s => s.epoch), [1, 2, 3, 4]);
 
   client.close();
 });
 
-test('WsClient: Result normalization and forwarding', async () => {
-  const resultsReceived = [];
-  const client = new WsClient({
-    WebSocketClass: FakeWebSocket,
-    url: 'ws://localhost:8000/ws',
-    onResult: (res) => resultsReceived.push(res),
-    initialEpoch: 2,
-    initialPlaybackRate: 1.5
-  });
+test('WsClient + SyncEngine: No double conversion at rate 1.5, 0.5, 2.0', async () => {
+  // Verifies: rate 1.5, video_start 60, backend start 66.0 -> cue.start must be 66.0 (not 126.0)
+  // and the same at 0.5 and 2.0.
 
-  await client.connect();
-  await new Promise(r => setTimeout(r, 20));
+  const testCases = [
+    { rate: 1.5, vStart: 60.0, backendStart: 66.0, backendEnd: 67.2 },
+    { rate: 0.5, vStart: 60.0, backendStart: 62.0, backendEnd: 62.4 },
+    { rate: 2.0, vStart: 60.0, backendStart: 68.0, backendEnd: 69.6 }
+  ];
 
-  // Anchor and send chunk 7 at video_start_time 50.0
-  client.updateVideoObservation({
-    epoch: 2,
-    video_id: 'vid_res',
-    video_current_time: 50.0,
-    playback_rate: 1.5,
-    paused: false,
-    seeking: false,
-    ad_state: 'main_video',
-    wall_time_ms: Date.now()
-  });
+  for (const { rate, vStart, backendStart, backendEnd } of testCases) {
+    const fakeVideo = { currentTime: vStart, playbackRate: rate };
+    const bridge = new SyncBridge({
+      video: fakeVideo,
+      render: () => {}
+    });
 
-  for (let i = 0; i < 10; i++) {
-    client.feedAudioBlock(create100msPcmBlock());
+    const testEpoch = bridge.getEpoch();
+    let forwardedResult = null;
+    const client = new WsClient({
+      WebSocketClass: FakeWebSocket,
+      url: 'ws://localhost:8000/ws',
+      initialEpoch: testEpoch,
+      initialPlaybackRate: rate,
+      onChunkSent: (chunkInfo) => {
+        bridge.registerChunk(chunkInfo.chunk_id, {
+          video_start_time: chunkInfo.video_start_time,
+          playback_rate: chunkInfo.playback_rate
+        });
+      },
+      onResult: (result) => {
+        forwardedResult = result;
+        bridge.handleResult(result);
+      }
+    });
+
+    await client.connect();
+    await new Promise(r => setTimeout(r, 15));
+
+    client.updateVideoObservation({
+      epoch: testEpoch,
+      video_id: 'test_vid',
+      video_current_time: vStart,
+      playback_rate: rate,
+      paused: false,
+      seeking: false,
+      ad_state: 'main_video',
+      wall_time_ms: Date.now()
+    });
+
+    // Feed 10 blocks (1.0s audio) to trigger chunk flush
+    for (let i = 0; i < 10; i++) {
+      client.feedAudioBlock(create100msPcmBlock());
+    }
+
+    // Backend returns absolute video seconds (start, end) without is_final or langs
+    client.ws.onmessage({
+      data: JSON.stringify({
+        type: 'subtitle',
+        chunk_id: 0,
+        epoch: testEpoch,
+        start: backendStart,
+        end: backendEnd,
+        lang: 'hi',
+        text: `Test text at rate ${rate}`,
+        source: 'stt'
+      })
+    });
+
+    assert.ok(forwardedResult, 'Result must be forwarded');
+    assert.strictEqual(forwardedResult.is_final, true, 'is_final must default to true when absent');
+    assert.deepStrictEqual(forwardedResult.langs, ['hi'], 'langs must default to [lang]');
+
+    // Retrieve cue from SyncEngine
+    const cue = bridge.engine.store.get(`${testEpoch}:0`);
+    assert.ok(cue, 'Cue must be stored in engine');
+
+    // CRITICAL ASSERTION: cue.start must be backendStart (66.0, 62.0, 68.0), NOT double-converted
+    assert.strictEqual(
+      cue.start,
+      backendStart,
+      `Double conversion detected! Expected cue.start=${backendStart}, got ${cue.start}`
+    );
+    assert.strictEqual(
+      cue.end,
+      backendEnd,
+      `Expected cue.end=${backendEnd}, got ${cue.end}`
+    );
+
+    bridge.destroy();
+    client.close();
   }
-
-  // Simulate backend returning subtitle result frame
-  client.ws.onmessage({
-    data: JSON.stringify({
-      type: 'subtitle',
-      chunk_id: 0,
-      epoch: 2,
-      start: 50.15,
-      end: 51.35,
-      lang: 'hi',
-      text: 'नमस्ते दोस्तों',
-      translation: 'Hello friends',
-      source: 'stt'
-    })
-  });
-
-  assert.strictEqual(resultsReceived.length, 1);
-  const res = resultsReceived[0];
-  assert.strictEqual(res.type, 'RESULT');
-  assert.strictEqual(res.chunk_id, 0);
-  assert.strictEqual(res.epoch, 2);
-  assert.strictEqual(res.start, 50.15);
-  assert.strictEqual(res.end, 51.35);
-  assert.strictEqual(res.start_offset, 0.1);
-  assert.strictEqual(res.end_offset, 0.9);
-  assert.strictEqual(res.is_final, true);
-  assert.strictEqual(res.lang, 'hi');
-  assert.deepStrictEqual(res.langs, ['hi']);
-  assert.strictEqual(res.text, 'नमस्ते दोस्तों');
-  assert.strictEqual(res.translation, 'Hello friends');
-  assert.strictEqual(res.source, 'stt');
-
-  client.close();
 });

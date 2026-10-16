@@ -1,10 +1,11 @@
 /**
  * extension/offscreen/ws_client.js
- * LiveSub Streaming WebSocket Client (Stage 2).
+ * LiveSub Streaming WebSocket Client (Stage 2 & Stage 3).
  *
  * Pure logic client with constructor dependency injection for WebSocketClass and storage.
  * Aggregates ~100 ms audio blocks into ~1000 ms chunks (16 kHz mono 16-bit PCM).
- * Handles backend handshake, rate changes, discontinuity discards, and result normalization.
+ * Handles backend handshake, rate changes, discontinuity discards, seek control frames,
+ * and result normalization with exact back-computation to prevent double time conversion.
  */
 
 (function(root) {
@@ -54,6 +55,8 @@
       this.playbackRate = typeof options.initialPlaybackRate === 'number' ? options.initialPlaybackRate : 1.0;
       this.latestAnchor = null;
       this.currentChunkVideoStartTime = null;
+      this.currentVideoId = null;
+      this._lastAdState = null;
 
       this.partialBuffer = [];
       this.bufferedSamples = 0;
@@ -64,6 +67,7 @@
 
       this.ws = null;
       this.isHandshakeComplete = false;
+      this._pendingSeek = null;
       this._closedManually = false;
     }
 
@@ -164,6 +168,17 @@
       if (msg.type === 'hello_ack') {
         this.isHandshakeComplete = true;
         if (msg.session_id) this.sessionId = msg.session_id;
+        if (typeof msg.epoch === 'number') {
+          this.epoch = msg.epoch;
+        }
+
+        // Transmit queued seek frame if pending
+        if (this._pendingSeek && this.ws && this.ws.readyState === 1) {
+          try {
+            this.ws.send(JSON.stringify(this._pendingSeek));
+          } catch (_) {}
+          this._pendingSeek = null;
+        }
         return;
       }
 
@@ -183,44 +198,49 @@
 
     /**
      * Normalizes backend subtitle message and triggers onResult callback.
+     * Back-computes start_offset and end_offset from absolute start/end using the
+     * registered chunk context:
+     *   start_offset = (start - video_start_time) / playback_rate
+     * This ensures SyncEngine's single conversion returns the exact backend value,
+     * completely eliminating double conversion.
+     * Defaults is_final to true when absent, and langs to [lang].
      * @private
      */
     _handleSubtitleResult(msg) {
       const cached = this.sentChunks.get(msg.chunk_id);
-      const playbackRate = (cached && cached.playback_rate) || this.playbackRate;
-      const vStart = (cached && cached.video_start_time) ?? 0.0;
+      const playbackRate = (cached && typeof cached.playback_rate === 'number')
+        ? cached.playback_rate
+        : this.playbackRate;
+      const vStart = (cached && typeof cached.video_start_time === 'number')
+        ? cached.video_start_time
+        : (this.latestAnchor?.video_current_time ?? 0.0);
 
       let start = msg.start;
       let end = msg.end;
       let startOffset = msg.start_offset;
       let endOffset = msg.end_offset;
 
-      if (start !== undefined && end !== undefined) {
-        if (startOffset === undefined) {
-          startOffset = Number(((start - vStart) / playbackRate).toFixed(3));
-        }
-        if (endOffset === undefined) {
-          endOffset = Number(((end - vStart) / playbackRate).toFixed(3));
-        }
-      } else if (startOffset !== undefined && endOffset !== undefined) {
-        if (start === undefined) {
-          start = Number((vStart + startOffset * playbackRate).toFixed(3));
-        }
-        if (end === undefined) {
-          end = Number((vStart + endOffset * playbackRate).toFixed(3));
-        }
+      if (typeof start === 'number' && typeof end === 'number') {
+        startOffset = Number(((start - vStart) / playbackRate).toFixed(6));
+        endOffset = Number(((end - vStart) / playbackRate).toFixed(6));
+      } else if (typeof startOffset === 'number' && typeof endOffset === 'number') {
+        start = Number((vStart + startOffset * playbackRate).toFixed(6));
+        end = Number((vStart + endOffset * playbackRate).toFixed(6));
       }
 
-      const langs = msg.langs || (msg.lang ? [msg.lang] : ['hi']);
+      const langs = (Array.isArray(msg.langs) && msg.langs.length > 0)
+        ? msg.langs
+        : (msg.lang ? [msg.lang] : ['hi']);
+
       const result = {
         type: 'RESULT',
         chunk_id: msg.chunk_id,
-        epoch: msg.epoch,
+        epoch: typeof msg.epoch === 'number' ? msg.epoch : this.epoch,
         start: start,
         end: end,
         start_offset: startOffset,
         end_offset: endOffset,
-        is_final: msg.is_final !== undefined ? msg.is_final : true,
+        is_final: msg.is_final !== undefined ? Boolean(msg.is_final) : true,
         lang: msg.lang || langs[0] || 'hi',
         langs: langs,
         text: msg.text || '',
@@ -231,11 +251,69 @@
       if (typeof this.onResult === 'function') {
         this.onResult(result);
       }
+      return result;
+    }
+
+    /**
+     * Sends the backend's real seek control frame:
+     *   {"type": "seek", "video_time": videoTime, "epoch": this.epoch}
+     * Advances epoch and clears partial buffer.
+     * @param {number} [videoTime=0] Video timestamp in seconds
+     * @param {number|null} [newEpoch=null] Optional target epoch
+     * @param {string} [reason='seek'] Discontinuity reason
+     * @returns {Object} The seek message sent
+     */
+    sendSeek(videoTime = 0, newEpoch = null, reason = 'seek') {
+      this.epoch = (typeof newEpoch === 'number' && newEpoch > this.epoch)
+        ? newEpoch
+        : (this.epoch + 1);
+
+      this.partialBuffer = [];
+      this.bufferedSamples = 0;
+      this.currentChunkVideoStartTime = (typeof videoTime === 'number') ? videoTime : null;
+
+      const vTime = typeof videoTime === 'number'
+        ? videoTime
+        : (this.latestAnchor?.video_current_time || 0);
+
+      const seekMsg = {
+        type: 'seek',
+        video_time: Number(vTime.toFixed(3)),
+        epoch: this.epoch
+      };
+
+      if (this.ws && this.ws.readyState === 1 && this.isHandshakeComplete) {
+        try {
+          this.ws.send(JSON.stringify(seekMsg));
+        } catch (_) {}
+      } else {
+        this._pendingSeek = seekMsg;
+      }
+
+      return seekMsg;
+    }
+
+    // Explicit event helpers that send the backend seek message
+    onSeek(videoTime = 0, newEpoch = null) {
+      return this.sendSeek(videoTime, newEpoch, 'seek');
+    }
+
+    onNavigation(videoId, videoTime = 0, newEpoch = null) {
+      this.currentVideoId = videoId;
+      return this.sendSeek(videoTime, newEpoch, 'navigation');
+    }
+
+    onAdStart(videoTime = 0, newEpoch = null) {
+      return this.sendSeek(videoTime, newEpoch, 'ad_start');
+    }
+
+    onAdEnd(videoTime = 0, newEpoch = null) {
+      return this.sendSeek(videoTime, newEpoch, 'ad_end');
     }
 
     /**
      * Ingests latest VIDEO_STATE_OBSERVATION from content script.
-     * Detects seeking, ads, epoch changes, or playback rate adjustments.
+     * Detects seeking, video navigation, ads, epoch changes, or playback rate adjustments.
      * @param {Object} obs Observation packet
      */
     updateVideoObservation(obs) {
@@ -244,10 +322,19 @@
       const isEpochBump = typeof obs.epoch === 'number' && obs.epoch > this.epoch;
       const isSeeking = Boolean(obs.seeking);
       const isAd = obs.ad_state === 'ad_playing';
+      const wasAd = this._lastAdState === 'ad_playing';
+      const isAdStart = isAd && !wasAd;
+      const isAdEnd = !isAd && wasAd;
+      const isVideoChange = Boolean(this.currentVideoId && obs.video_id && obs.video_id !== this.currentVideoId);
 
-      if (isEpochBump || isSeeking || isAd) {
+      this.currentVideoId = obs.video_id || this.currentVideoId;
+      this._lastAdState = obs.ad_state || this._lastAdState;
+
+      // Discontinuity triggered on: seek, navigation (video_id change), ad start or ad end, or epoch bump
+      if (isEpochBump || isSeeking || isAdStart || isAdEnd || isVideoChange) {
         const nextEpoch = isEpochBump ? obs.epoch : (this.epoch + 1);
-        this.handleDiscontinuity(nextEpoch, isAd ? 'ad' : (isSeeking ? 'seek' : 'epoch_bump'), obs.video_current_time);
+        const reason = isVideoChange ? 'navigation' : (isAdStart ? 'ad_start' : (isAdEnd ? 'ad_end' : (isSeeking ? 'seek' : 'epoch_bump')));
+        this.sendSeek(obs.video_current_time || 0.0, nextEpoch, reason);
         this.latestAnchor = obs;
         return;
       }
@@ -277,30 +364,6 @@
       }
 
       this.playbackRate = newRate;
-    }
-
-    /**
-     * Bumps epoch and drops partial aggregation buffer on seek, navigation, or ad.
-     * @param {number|null} [newEpoch]
-     * @param {string} [reason]
-     * @param {number|null} [videoTime]
-     */
-    handleDiscontinuity(newEpoch = null, reason = 'discontinuity', videoTime = null) {
-      this.epoch = (typeof newEpoch === 'number' && newEpoch > this.epoch) ? newEpoch : (this.epoch + 1);
-      this.partialBuffer = [];
-      this.bufferedSamples = 0;
-      this.currentChunkVideoStartTime = (typeof videoTime === 'number') ? videoTime : null;
-
-      if (this.ws && this.ws.readyState === 1 && this.isHandshakeComplete) {
-        const vTime = typeof videoTime === 'number' ? videoTime : (this.latestAnchor?.video_current_time || 0);
-        try {
-          this.ws.send(JSON.stringify({
-            type: 'seek',
-            video_time: Number(vTime.toFixed(3)),
-            epoch: this.epoch
-          }));
-        } catch (_) {}
-      }
     }
 
     /**
@@ -368,9 +431,7 @@
         ? this.currentChunkVideoStartTime
         : 0.0;
 
-      // start_next = video_start_time + offset * rate
       const nextStart = Number((vStartTime + (chunkDurationS * currentRate)).toFixed(6));
-
       const chunkId = this.chunkId++;
       const currentEpoch = this.epoch;
 
