@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveSub</title>
+  <style>
+    body {
+      width: 260px;
+      margin: 0;
+      padding: 12px 16px;
+      font: 13px/1.5 Arial, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      box-sizing: border-box;
+    }
+    h2 { margin: 0 0 4px; font-size: 15px; color: #ff4444; letter-spacing: 0.5px; }
+    .status { font-size: 11px; color: #aaa; margin: 0 0 10px; }
+    .row { display: flex; gap: 6px; margin-bottom: 6px; }
+    button {
+      flex: 1; padding: 6px 4px; border: 1px solid #444; border-radius: 5px;
+      background: #2a2a2a; color: #eee; cursor: pointer; font-size: 12px;
+    }
+    button.primary { background: #cc2222; border-color: #cc2222; color: #fff; font-weight: 600; }
+    button:hover { filter: brightness(1.2); }
+    .note { font-size: 10px; color: #555; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h2>🔴 LiveSub</h2>
+  <p class="status">Overlay spike — all 4 phases active.</p>
+  <div class="row">
+    <button class="primary" id="btn-demo">▶ Demo</button>
+    <button id="btn-clear">✕ Clear</button>
+  </div>
+  <p class="note">Style controls (font, colour, position) are in the ⚙ LiveSub panel inside the YouTube player.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

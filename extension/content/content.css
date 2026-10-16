@@ -1,0 +1,12 @@
+/*
+ * content.css — LiveSub Phase 1
+ * Minimal host-page rules. Actual subtitle styling lives inside the Shadow DOM
+ * (buildShadowCSS() in content.js) so it is isolated from YouTube's CSS.
+ *
+ * Only rules that must live in the host document belong here (e.g. the demo
+ * button, which is appended to document.body directly).
+ */
+
+/* Nothing to declare at host level for Phase 1.
+   The demo button is styled inline (content.js) to stay self-contained.
+   This file is kept so manifest.json's css[] entry resolves without error. */
