@@ -13,6 +13,8 @@ let sessionId = 'sess_' + Date.now();
 let currentVideoId = null;
 let currentEpoch = 0;
 let latestAnchor = null;
+let wsClient = null;
+let currentTargetTabId = null;
 
 // Bounded ring buffer for diagnostic metadata
 const MAX_DIAGNOSTIC_HISTORY = 50;
@@ -93,11 +95,12 @@ function recordDiagnostic(rawMeta) {
   );
 }
 
-async function startCapture(streamId) {
+async function startCapture(streamId, targetTabId = null) {
   if (isCapturing) {
     console.warn('[Offscreen] Capture already running. Ignoring duplicate start.');
     return { success: true, message: 'Already capturing' };
   }
+  currentTargetTabId = targetTabId;
 
   try {
     // 1. Consume the tab stream ID promptly using audio-only getUserMedia
@@ -144,12 +147,52 @@ async function startCapture(streamId) {
     await audioContext.audioWorklet.addModule(processorUrl);
     workletNode = new AudioWorkletNode(audioContext, 'audio-chunk-processor');
 
-    // Handle diagnostic metadata from AudioWorklet
+    // Handle diagnostic metadata and PCM audio from AudioWorklet
     workletNode.port.onmessage = (event) => {
-      if (event.data && event.data.type === 'CHUNK_DIAGNOSTIC') {
+      if (!event.data) return;
+      if (event.data.type === 'CHUNK_AUDIO' || event.data.type === 'CHUNK_DIAGNOSTIC') {
         recordDiagnostic(event.data);
+        if (event.data.pcm && wsClient && isCapturing) {
+          wsClient.feedAudioBlock(new Int16Array(event.data.pcm), event.data.audio_duration_s);
+        }
       }
     };
+
+    // Initialize WsClient for backend streaming
+    const WsClientClass = globalThis.WsClient;
+    if (WsClientClass) {
+      wsClient = new WsClientClass({
+        initialEpoch: currentEpoch,
+        initialPlaybackRate: latestAnchor ? latestAnchor.playback_rate : 1.0,
+        onChunkSent: (chunkInfo) => {
+          chrome.runtime.sendMessage({
+            type: 'CHUNK_SENT',
+            targetTabId: currentTargetTabId,
+            chunk_id: chunkInfo.chunk_id,
+            video_start_time: chunkInfo.video_start_time,
+            playback_rate: chunkInfo.playback_rate
+          }).catch(() => {});
+        },
+        onResult: (result) => {
+          chrome.runtime.sendMessage({
+            type: 'RESULT',
+            targetTabId: currentTargetTabId,
+            result: result
+          }).catch(() => {});
+        },
+        onError: (err) => {
+          console.warn('[Offscreen WS] Error:', err);
+        }
+      });
+
+      if (latestAnchor) {
+        wsClient.updateVideoObservation(latestAnchor);
+      }
+
+      wsClient.connect().catch((err) => {
+        console.warn('[Offscreen WS] Connect error (will retry or offline):', err);
+      });
+    }
 
     // Connect source to workletNode
     sourceNode.connect(workletNode);
@@ -177,6 +220,15 @@ async function stopCapture() {
   }
 
   try {
+    if (wsClient) {
+      try {
+        wsClient.close();
+      } catch (e) {
+        console.warn('[Offscreen] Error closing wsClient:', e);
+      }
+      wsClient = null;
+    }
+
     // 1. Flush any partial chunk in the worklet before teardown
     if (workletNode && workletNode.port) {
       try {
@@ -251,7 +303,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'START_OFFSCREEN_CAPTURE') {
-    startCapture(message.streamId).then(sendResponse);
+    startCapture(message.streamId, message.targetTabId).then(sendResponse);
     return true;
   }
 
@@ -285,6 +337,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     latestAnchor = obs;
+    if (wsClient) {
+      wsClient.updateVideoObservation(obs);
+    }
     return false;
   }
 

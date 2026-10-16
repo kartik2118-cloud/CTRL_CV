@@ -214,6 +214,21 @@ registerHandler('EXPORT_DIAGNOSTICS', (msg, sender, sendResponse) => {
   return true;
 });
 
+// Stage 2 Routing: offscreen -> background -> content
+registerHandler('CHUNK_SENT', (msg) => {
+  const tabId = msg.targetTabId || (captureSession && captureSession.targetTabId);
+  if (tabId) {
+    chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+  }
+});
+
+registerHandler('RESULT', (msg) => {
+  const tabId = msg.targetTabId || (captureSession && captureSession.targetTabId);
+  if (tabId) {
+    chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+  }
+});
+
 // Primary Message Dispatcher
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const action = msg?.action || msg?.type;

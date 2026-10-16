@@ -55,6 +55,7 @@
     {
       "resources": [
         "offscreen/audio-processor.js",
+        "offscreen/ws_client.js",
         "vendor/syncEngine.browser.js"
       ],
       "matches": [
