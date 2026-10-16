@@ -114,7 +114,7 @@ async def evaluate_clip(
     speech_onset = detect_speech_onset(audio_path)
 
     # Stream clip over WebSocket
-    cues = await stream_clip(
+    cues, meta = await stream_clip(
         clip_path=audio_path,
         url=url,
         lang=lang_short,
@@ -122,7 +122,8 @@ async def evaluate_clip(
         realtime=(not fast),
         protocol=protocol,
         output_path=None,
-        verbose=False
+        verbose=False,
+        return_meta=True
     )
 
     hyp_text_parts = [c.get("text", "") for c in cues if c.get("text")]
@@ -146,7 +147,9 @@ async def evaluate_clip(
         "speech_onset": speech_onset,
         "sync_gap": sync_gap,
         "clip_duration": ref_item.get("duration", 0.0),
-        "failed": False
+        "failed": False,
+        "rate_limited": meta.get("rate_limited", False),
+        "rate_limit_count": meta.get("rate_limit_count", 0)
     }
 
 
@@ -171,9 +174,12 @@ async def evaluate_all_clips(
             try:
                 res = await evaluate_clip(ref, url=url, chunk_ms=chunk_ms, fast=fast, protocol=protocol)
                 elapsed = time.time() - t0
-                print(f"[{idx:02d}/{total_clips:02d}] FINISHED {cid} ({len(res['cues'])} cues, {elapsed:.2f}s)", flush=True)
+                status_suffix = " (RATE LIMITED)" if res.get("rate_limited") else ""
+                print(f"[{idx:02d}/{total_clips:02d}] FINISHED {cid} ({len(res['cues'])} cues, {elapsed:.2f}s){status_suffix}", flush=True)
                 return res
             except Exception as e:
+                err_str = str(e).lower()
+                is_rl = "429" in err_str or "rate limit" in err_str or "rate_limit" in err_str
                 print(f"[{idx:02d}/{total_clips:02d}] FAILED {cid}: {e}", flush=True)
                 return {
                     "id": cid,
@@ -186,7 +192,9 @@ async def evaluate_all_clips(
                     "speech_onset": 0.0,
                     "sync_gap": None,
                     "clip_duration": ref.get("duration", 0.0),
-                    "failed": True
+                    "failed": True,
+                    "rate_limited": is_rl,
+                    "rate_limit_count": 1 if is_rl else 0
                 }
 
     tasks = [worker(ref, i + 1) for i, ref in enumerate(refs)]
@@ -207,6 +215,7 @@ def run_evaluation(
     fast: bool = False,
     concurrency: int = 2,
     max_clips: int | None = None,
+    max_clips_per_lang: int | None = None,
     langs: str | None = None,
     run_label: str = "SIMULATED",
     protocol: str = "contract_v01"
@@ -223,6 +232,18 @@ def run_evaluation(
             if r["language"].lower() in lang_set or r["language"].split("_")[0].lower() in lang_set
         ]
 
+    # Filter by max_clips_per_lang if requested
+    if max_clips_per_lang is not None:
+        lang_counts = {}
+        filtered_refs = []
+        for r in refs_data:
+            l = r["language"]
+            cnt = lang_counts.get(l, 0)
+            if cnt < max_clips_per_lang:
+                filtered_refs.append(r)
+                lang_counts[l] = cnt + 1
+        refs_data = filtered_refs
+
     # Filter by max_clips if requested
     if max_clips is not None:
         refs_data = refs_data[:max_clips]
@@ -234,6 +255,8 @@ def run_evaluation(
     print(f"Streaming Mode       : {'Realtime' if not fast else 'Fast (unthrottled)'}")
     print(f"Concurrency Limit    : {concurrency}")
     print(f"Clips to Evaluate    : {len(refs_data)}")
+    if max_clips_per_lang is not None:
+        print(f"Max Clips Per Lang   : {max_clips_per_lang}")
     print("=" * 70)
 
     if not refs_data:
@@ -278,6 +301,7 @@ def run_evaluation(
             "translation": r["translation"],
             "cue_count": len(r["cues"]),
             "failed": r.get("failed", False),
+            "rate_limited": r.get("rate_limited", False),
             "speech_onset": r.get("speech_onset", 0.0),
             "sync_gap": r.get("sync_gap")
         }
@@ -294,8 +318,11 @@ def run_evaluation(
     print(f"Saved combined cue log ({len(all_cues)} cues) to: {cue_log_path}")
 
     # 1. Compute Accuracy Metrics (CER / WER)
+    # 429 / rate-limited clips are tracked separately and excluded from CER/WER scoring
     accuracy_records = []
     for r in clip_results:
+        if r.get("rate_limited", False):
+            continue
         metrics = compute_metrics(r["reference"], r["hypothesis"], r["language"])
         accuracy_records.append({
             "id": r["id"],
@@ -312,6 +339,8 @@ def run_evaluation(
     # 2. Compute Translation Metrics (chrF against English references)
     trans_records = []
     for r in clip_results:
+        if r.get("rate_limited", False):
+            continue
         lang = r["language"]
         if lang in ("en_us", "en"):
             ref_en = r.get("reference")
@@ -339,10 +368,14 @@ def run_evaluation(
     all_sync_gaps = []
 
     for lang in unique_langs:
-        lang_acc = df_acc[df_acc["language"] == lang]
+        lang_acc = df_acc[df_acc["language"] == lang] if not df_acc.empty else pd.DataFrame()
         is_en = lang in ("en_us", "en")
         metric_name = "WER" if is_en else "CER"
-        avg_acc_score = lang_acc["wer"].mean() if is_en else lang_acc["cer"].mean()
+        if not lang_acc.empty:
+            avg_acc_score = lang_acc["wer"].mean() if is_en else lang_acc["cer"].mean()
+            score_ratio_str = round(avg_acc_score / 100.0, 3)
+        else:
+            score_ratio_str = "N/A"
 
         lang_cues = [c for r in clip_results if r["language"] == lang for c in r["cues"]]
         lat_res = evaluate_latency(lang_cues) if lang_cues else {"median": 0.0, "p90": 0.0, "final_score_pct": 0.0}
@@ -354,38 +387,43 @@ def run_evaluation(
         p90_gap = float(np.percentile(lang_sync_gaps, 90)) if lang_sync_gaps else 0.0
 
         failed_count = sum(1 for r in clip_results if r["language"] == lang and r.get("failed", False))
+        rate_limited_count = sum(1 for r in clip_results if r["language"] == lang and r.get("rate_limited", False))
 
         summary_rows.append({
             "Language": lang,
             "Clips": len(lang_acc),
             "Metric": metric_name,
-            "Score (ratio)": round(avg_acc_score / 100.0, 3),
+            "Score (ratio)": score_ratio_str,
             "chrF": f"{chrf_val:.2f}" if chrf_val is not None else "N/A",
             "Latency Med/P90 (s)": f"{lat_res['median']:.2f} / {lat_res['p90']:.2f}",
             "Sync Gap Med/P90 (s)": f"{med_gap:.3f} / {p90_gap:.3f}",
             "Failed/Timeouts": failed_count,
-            "Label": run_label
+            "Label": run_label,
+            "Rate-Limited": rate_limited_count
         })
 
     # Overall Row
     overall_cues = all_cues
     overall_lat = evaluate_latency(overall_cues) if overall_cues else {"median": 0.0, "p90": 0.0, "final_score_pct": 0.0}
     overall_chrf = trans_eval.get("overall_chrf", 0.0) if trans_records else 0.0
-    overall_acc_err = df_acc["primary_score"].mean() if not df_acc.empty else 0.0
+    overall_acc_err = df_acc["primary_score"].mean() if not df_acc.empty else None
+    overall_score_ratio = round(overall_acc_err / 100.0, 3) if overall_acc_err is not None else "N/A"
     overall_med_gap = float(np.median(all_sync_gaps)) if all_sync_gaps else 0.0
     overall_p90_gap = float(np.percentile(all_sync_gaps, 90)) if all_sync_gaps else 0.0
     overall_failed = sum(1 for r in clip_results if r.get("failed", False))
+    overall_rate_limited = sum(1 for r in clip_results if r.get("rate_limited", False))
 
     summary_rows.append({
         "Language": "OVERALL",
-        "Clips": len(clip_results),
+        "Clips": len(df_acc),
         "Metric": "MIXED",
-        "Score (ratio)": round(overall_acc_err / 100.0, 3),
+        "Score (ratio)": overall_score_ratio,
         "chrF": f"{overall_chrf:.2f}",
         "Latency Med/P90 (s)": f"{overall_lat['median']:.2f} / {overall_lat['p90']:.2f}",
         "Sync Gap Med/P90 (s)": f"{overall_med_gap:.3f} / {overall_p90_gap:.3f}",
         "Failed/Timeouts": overall_failed,
-        "Label": run_label
+        "Label": run_label,
+        "Rate-Limited": overall_rate_limited
     })
 
     summary_df = pd.DataFrame(summary_rows)
@@ -398,6 +436,8 @@ def run_evaluation(
     print("=" * 105)
     print(summary_df.to_string(index=False))
     print("=" * 105)
+    if overall_rate_limited > 0:
+        print(f"[Rate Limit Summary]: {overall_rate_limited} clip(s) encountered HTTP 429 rate limits and were excluded from CER/WER scoring.")
     print("NOTE: FLEURS saaf speech hai, noisy/Hinglish pe numbers alag honge.")
     print("Backend Sync Gap Analysis:")
     print(f"  Acoustic speech onset vs cue.start median gap: {overall_med_gap:.3f}s, P90: {overall_p90_gap:.3f}s.")
@@ -414,7 +454,10 @@ def main():
     parser.add_argument("--engine_label", type=str, default="mock", help="Engine label (e.g., mock, whisper)")
     parser.add_argument("--references", type=str, default=str(DEFAULT_REFS_PATH), help="Path to references.json")
     parser.add_argument("--chunk_ms", type=int, default=1000, help="Chunk duration in ms")
-    parser.add_argument("--concurrency", type=int, default=2, help="Max concurrent streams (default: 2)")
+    parser.add_argument("--concurrency", type=int, default=None, help="Max concurrent streams (default: 2 for mock, 1 for non-mock)")
+    parser.add_argument("--max_clips_per_lang", type=int, default=None, help="Max clips per language (e.g. 2)")
+    parser.add_argument("--rpm_limit", type=float, default=20.0, help="RPM limit threshold (default: 20)")
+    parser.add_argument("--confirm_rpm", action="store_true", help="Confirm proceeding when estimated RPM exceeds --rpm_limit")
     parser.add_argument("--realtime", action="store_true", help="Stream in real-time (default safe mode)")
     parser.add_argument("--fast", action="store_true", help="Stream fast without realtime sleep")
     parser.add_argument("--max_clips", type=int, default=None, help="Limit total number of clips")
@@ -438,6 +481,30 @@ def main():
     is_real_stt = stt_prov in ("whisper", "sarvam")
     is_localhost = ("localhost" in ws_url or "127.0.0.1" in ws_url or "0.0.0.0" in ws_url)
 
+    # Concurrency rule: default to 1 for non-mock engines, 2 for mock
+    if args.concurrency is not None:
+        concurrency = args.concurrency
+    else:
+        concurrency = 1 if (is_real_stt or args.engine_label != "mock" or args.protocol == "real") else 2
+
+    # Estimated RPM Calculation & Preflight Check
+    chunk_dur_sec = args.chunk_ms / 1000.0
+    estimated_rpm = concurrency * (60.0 / chunk_dur_sec)
+    print("=" * 70)
+    print(f"RPM Preflight Check: Estimated RPM = {estimated_rpm:.1f} (concurrency={concurrency}, chunk_ms={args.chunk_ms}, rpm_limit={args.rpm_limit:.1f})")
+    print("=" * 70)
+
+    if estimated_rpm > args.rpm_limit:
+        print(f"\n[WARNING] Estimated RPM ({estimated_rpm:.1f}) exceeds the RPM limit of {args.rpm_limit:.1f}!")
+        print("Cloud STT endpoints (e.g., Groq free tier at 20 RPM) will throttle or return HTTP 429 rate limit errors.")
+        if not args.confirm_rpm and (is_real_stt or args.engine_label != "mock"):
+            print("[ERROR] Run aborted. To proceed despite exceeding the RPM limit, pass --confirm_rpm.")
+            sys.exit(1)
+        elif not args.confirm_rpm:
+            print("[NOTICE] Mock provider detected: proceeding. For real cloud providers, pass --confirm_rpm.\n")
+        else:
+            print("[CONFIRMED] Proceeding with evaluation as --confirm_rpm flag was provided.\n")
+
     # Label rows SIMULATED when provider is "mock" or the host is localhost with a mock provider.
     # MEASURED only when the provider is a real STT (whisper or sarvam).
     if is_real_stt and not (is_localhost and stt_prov == "mock"):
@@ -451,8 +518,9 @@ def main():
         references_path=Path(args.references),
         chunk_ms=args.chunk_ms,
         fast=fast_mode,
-        concurrency=args.concurrency,
+        concurrency=concurrency,
         max_clips=args.max_clips,
+        max_clips_per_lang=args.max_clips_per_lang,
         langs=args.langs,
         run_label=run_label,
         protocol=args.protocol

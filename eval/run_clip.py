@@ -73,8 +73,9 @@ async def stream_clip(
     no_epoch_drop: bool = False,
     protocol: str = "contract_v01",
     output_path: Path | None = DEFAULT_OUTPUT,
-    verbose: bool = True
-) -> list[dict]:
+    verbose: bool = True,
+    return_meta: bool = False
+) -> list[dict] | tuple[list[dict], dict]:
     """Streams audio chunks to WebSocket backend and collects results into cue log."""
     if verbose:
         print(f"\n[Client] Preparing audio from: {clip_path}")
@@ -92,6 +93,9 @@ async def stream_clip(
     seek_events = []
     stale_dropped_count = 0
     stale_dropped_chunk_ids = []
+
+    rate_limited = False
+    rate_limit_count = 0
 
     results_received_event = asyncio.Event()
 
@@ -137,7 +141,7 @@ async def stream_clip(
         last_seek_to = 0.0
 
         async def receiver_task():
-            nonlocal stale_dropped_count
+            nonlocal stale_dropped_count, rate_limited, rate_limit_count
             try:
                 while True:
                     raw_msg = await ws.recv()
@@ -150,8 +154,15 @@ async def stream_clip(
                             print(f"[Client] Backend seek_ack: epoch={res.get('epoch')}, video_time={res.get('video_time')}s")
                         continue
                     elif msg_type == "error":
-                        if verbose:
-                            print(f"[Client] Backend error frame: {res.get('detail')}")
+                        detail_text = str(res.get("detail", "")) + " " + str(res.get("message", ""))
+                        if "429" in detail_text or "rate limit" in detail_text.lower() or "rate_limit" in detail_text.lower():
+                            rate_limited = True
+                            rate_limit_count += 1
+                            if verbose:
+                                print(f"[Client] Backend rate-limit (HTTP 429) frame: {detail_text}")
+                        else:
+                            if verbose:
+                                print(f"[Client] Backend error frame: {res.get('detail')}")
                         continue
                     elif msg_type == "config_ack":
                         if verbose:
@@ -352,6 +363,17 @@ async def stream_clip(
             print(f"\n[Client EXPORT] Exported {len(cues)} cues to {out_p}")
             print(f"[Client EXPORT] Exported seek sidecar to {sidecar_path}")
             print(f"[Client SUMMARY] Stale results dropped count: {stale_dropped_count} (chunks: {stale_dropped_chunk_ids})")
+
+    meta_info = {
+        "rate_limited": rate_limited,
+        "rate_limit_count": rate_limit_count,
+        "stale_dropped_count": stale_dropped_count,
+        "stale_dropped_chunk_ids": stale_dropped_chunk_ids,
+        "seek_events": seek_events
+    }
+
+    if return_meta:
+        return cues, meta_info
 
     return cues
 
