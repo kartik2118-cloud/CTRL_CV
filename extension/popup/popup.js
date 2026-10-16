@@ -32,6 +32,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const urlInput = document.getElementById('backend-url');
   const urlFeedback = document.getElementById('url-feedback');
 
+  const defaultPlaceholder = (typeof DEFAULT_WS_URL !== 'undefined') ? DEFAULT_WS_URL : 'wss://REPLACE_ME/ws';
+  if (urlInput) {
+    urlInput.placeholder = defaultPlaceholder;
+  }
+
   // Load configured backend URL and active state
   chrome.storage.local.get(['backend_url', 'livesub_active'], (items) => {
     if (items.backend_url) {

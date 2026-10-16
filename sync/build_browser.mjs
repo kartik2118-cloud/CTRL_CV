@@ -81,6 +81,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (cliArgs[i] === "--out" && cliArgs[i + 1]) {
       outArg = cliArgs[i + 1];
       i++;
+    } else if (cliArgs[i] === "--copy") {
+      if (cliArgs[i + 1] && !cliArgs[i + 1].startsWith("--")) {
+        outArg = cliArgs[i + 1];
+        i++;
+      } else {
+        outArg = "extension/vendor";
+      }
     }
   }
   buildBrowserBundle(outArg);

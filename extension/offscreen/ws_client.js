@@ -33,7 +33,10 @@
      */
     constructor(options = {}) {
       this.WebSocketClass = options.WebSocketClass || (typeof WebSocket !== 'undefined' ? WebSocket : null);
-      this.defaultUrl = options.defaultUrl || 'ws://localhost:8000/ws';
+      const fallbackUrl = (typeof DEFAULT_WS_URL !== 'undefined')
+        ? DEFAULT_WS_URL
+        : (typeof globalThis !== 'undefined' && globalThis.DEFAULT_WS_URL ? globalThis.DEFAULT_WS_URL : 'wss://REPLACE_ME/ws');
+      this.defaultUrl = options.defaultUrl || fallbackUrl;
       this.url = options.url || null;
       this.storage = options.storage || (typeof chrome !== 'undefined' && chrome?.storage?.local ? chrome.storage.local : null);
 

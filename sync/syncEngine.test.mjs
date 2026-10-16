@@ -1528,5 +1528,59 @@ test("37. G3.2: Playback rates (0.5, 0.75, 1.0, 1.5, 2.0) conversion: t_video = 
   }
 });
 
+test("38. H1: Result without is_final defaults to final (first_shown_at set & exported in exportLog); explicit is_final=false remains partial", () => {
+  let currentTime = 15.0;
+  const engine = new SyncEngine({ getVideoTime: () => currentTime });
+  const ctx = { video_start_time: 15.0, playback_rate: 1.0 };
+
+  // Case 1: Result frame with NO is_final property (undefined)
+  const resultWithoutFinal = {
+    chunk_id: 501,
+    epoch: 1,
+    start_offset: 0.0,
+    end_offset: 2.0,
+    lang: "hi",
+    text: "बिना is_final वाला टेस्ट"
+  };
+  const { cue: cueDefaultFinal } = engine.onResult(resultWithoutFinal, ctx);
+
+  assert.equal(cueDefaultFinal.is_final, true, "is_final must default to true when undefined");
+  assert.equal(cueDefaultFinal.first_shown_at, null, "first_shown_at should be null before markShown");
+
+  // Display cue
+  engine.markShown(cueDefaultFinal, 15.2);
+  assert.equal(cueDefaultFinal.first_shown_at, 15.2, "first_shown_at must be recorded for default-final cue");
+
+  // exportLog() must include this cue
+  const exported = engine.exportLog();
+  assert.equal(exported.length, 1);
+  assert.equal(exported[0].text, "बिना is_final वाला टेस्ट");
+  assert.equal(exported[0].first_shown_at, 15.2);
+  assert.equal(engine.getUnfinalizedCount(), 0);
+
+  // Case 2: Explicit is_final=false (partial)
+  const resultExplicitPartial = {
+    chunk_id: 502,
+    epoch: 1,
+    is_final: false,
+    start_offset: 2.5,
+    end_offset: 4.5,
+    lang: "hi",
+    text: "अधूरा पार्शियल टेक्स्ट"
+  };
+  const { cue: cuePartial } = engine.onResult(resultExplicitPartial, ctx);
+
+  assert.equal(cuePartial.is_final, false, "is_final must be false when explicitly false");
+  engine.markShown(cuePartial, 15.5);
+
+  // Assert first_shown_at remains null for explicit false
+  assert.equal(cuePartial.first_shown_at, null, "first_shown_at must remain null for partial cue");
+
+  // exportLog() must still only contain 1 cue (chunk 501), skipping the partial 502
+  const exportedAfterPartial = engine.exportLog();
+  assert.equal(exportedAfterPartial.length, 1);
+  assert.equal(engine.getUnfinalizedCount(), 1, "Unfinalized partial count must be 1");
+});
+
 
 

@@ -309,7 +309,7 @@ def run_evaluation(
             "translation": r["translation"],
             "cue_count": len(r["cues"]),
             "coverage": r.get("coverage", "N/A"),
-            "status": "INVALID_RATE_LIMITED" if r.get("rate_limited", False) else ("FAILED" if r.get("failed", False) else "VALID"),
+            "status": "INVALID_RATE_LIMITED" if r.get("rate_limited", False) else ("INVALID_INCOMPLETE" if r.get("is_incomplete", False) else ("FAILED" if r.get("failed", False) else "VALID")),
             "failed": r.get("failed", False),
             "rate_limited": r.get("rate_limited", False),
             "speech_onset": r.get("speech_onset", 0.0),
@@ -328,11 +328,18 @@ def run_evaluation(
     print(f"Saved combined cue log ({len(all_cues)} cues) to: {cue_log_path}")
 
     # 1. Compute Accuracy Metrics (CER / WER)
-    # 429 / rate-limited clips are tracked separately and excluded from CER/WER scoring
+    # 429 / rate-limited and incomplete (coverage < 0.95) clips are excluded from CER/WER scoring
     accuracy_records = []
     for r in clip_results:
-        if r.get("rate_limited", False):
+        sent = r.get("chunks_sent", 0)
+        recv = r.get("results_received", 0)
+        cov_ratio = (recv / sent) if sent > 0 else 1.0
+        is_incomplete = cov_ratio < 0.95
+        r["is_incomplete"] = is_incomplete
+
+        if r.get("rate_limited", False) or is_incomplete:
             continue
+
         metrics = compute_metrics(r["reference"], r["hypothesis"], r["language"])
         accuracy_records.append({
             "id": r["id"],
@@ -349,7 +356,7 @@ def run_evaluation(
     # 2. Compute Translation Metrics (chrF against English references)
     trans_records = []
     for r in clip_results:
-        if r.get("rate_limited", False):
+        if r.get("rate_limited", False) or r.get("is_incomplete", False):
             continue
         lang = r["language"]
         if lang in ("en_us", "en"):
@@ -389,9 +396,12 @@ def run_evaluation(
 
         failed_count = sum(1 for r in lang_clips if r.get("failed", False))
         rate_limited_count = sum(1 for r in lang_clips if r.get("rate_limited", False))
+        incomplete_count = sum(1 for r in lang_clips if r.get("is_incomplete", False) and not r.get("rate_limited", False))
 
         if rate_limited_count > 0:
             score_ratio_str = "INVALID_RATE_LIMITED"
+        elif incomplete_count > 0 and lang_acc.empty:
+            score_ratio_str = "INVALID_INCOMPLETE"
         elif not lang_acc.empty:
             avg_acc_score = lang_acc["wer"].mean() if is_en else lang_acc["cer"].mean()
             score_ratio_str = round(avg_acc_score / 100.0, 3)
@@ -430,6 +440,7 @@ def run_evaluation(
     overall_p90_gap = float(np.percentile(all_sync_gaps, 90)) if all_sync_gaps else 0.0
     overall_failed = sum(1 for r in clip_results if r.get("failed", False))
     overall_rate_limited = sum(1 for r in clip_results if r.get("rate_limited", False))
+    overall_incomplete = sum(1 for r in clip_results if r.get("is_incomplete", False) and not r.get("rate_limited", False))
 
     overall_sent = sum(r.get("chunks_sent", 0) for r in clip_results)
     overall_recv = sum(r.get("results_received", 0) for r in clip_results)
@@ -437,6 +448,8 @@ def run_evaluation(
 
     if overall_rate_limited > 0:
         overall_score_ratio = "INVALID_RATE_LIMITED"
+    elif overall_incomplete > 0 and df_acc.empty:
+        overall_score_ratio = "INVALID_INCOMPLETE"
     elif overall_acc_err is not None:
         overall_score_ratio = round(overall_acc_err / 100.0, 3)
     else:

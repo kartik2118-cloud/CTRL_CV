@@ -37,4 +37,4 @@ Write-Host "Upgrading pip..."
 Write-Host "Installing requirements from $ReqFile..."
 & $VenvPip install -r $ReqFile
 
-Write-Host "Setup completed successfully."
+Write-Host "Setup finished successfully."

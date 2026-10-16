@@ -17,3 +17,6 @@ venv/
 eval/data/
 eval/results/
 eval/venv/
+
+# Build artifacts
+dist/

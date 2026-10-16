@@ -28,6 +28,7 @@ class SyncEngine {
     this.isAdActive = false;
     this.store = new Map(); // Keyed by (epoch, chunk_id) => `${epoch}:${chunk_id}`
     this.events = [];
+    this.unfinalizedDroppedCount = 0;
   }
 
   /**
@@ -72,6 +73,7 @@ class SyncEngine {
     const key = `${result.epoch}:${result.chunk_id}`;
     let cue = this.store.get(key);
     const at = Number(this.getVideoTime().toFixed(2));
+    const isFinal = result.is_final !== undefined ? Boolean(result.is_final) : true;
 
     const langsList = Array.isArray(result.langs) && result.langs.length > 0
       ? result.langs
@@ -92,6 +94,7 @@ class SyncEngine {
         text: result.text || "",
         translation: result.translation || "",
         source: result.source || "stt",
+        is_final: isFinal,
         first_shown_at: null,
         revisions: []
       };
@@ -101,11 +104,12 @@ class SyncEngine {
       cue.end = end;
       cue.lang = dominantLang;
       cue._langs = langsList;
+      cue.is_final = isFinal;
       if (result.text !== undefined) cue.text = result.text;
       if (result.translation !== undefined) cue.translation = result.translation;
     }
 
-    // Append revision (partial is_final=false or final is_final=true)
+    // Append revision (text state recorded at current timeline time)
     cue.revisions.push({
       at,
       text: cue.text
@@ -114,11 +118,11 @@ class SyncEngine {
     // Late-cue policy:
     // If live result arrives at or after its speech end (at >= end):
     // Hold visible from arrival time for minHold seconds (default 2.0s).
-    // first_shown_at = arrival video time.
+    // first_shown_at set only if finalized.
     if (at >= end) {
       cue._arrivalVideoTime = at;
       cue._holdUntil = Number((at + this.minHold).toFixed(2));
-      if (cue.first_shown_at === null) {
+      if (cue.is_final && cue.first_shown_at === null) {
         cue.first_shown_at = at;
         cue._shows.push({ epoch: this.epoch, at });
       }
@@ -271,6 +275,12 @@ class SyncEngine {
       }
     }
 
+    // Strict rule: partial cues (is_final === false) must not set first_shown_at.
+    // first_shown_at is recorded only when the final (is_final === true) text is displayed.
+    if (cue.is_final === false) {
+      return;
+    }
+
     const shownInCurrentEpoch = cue._shows.some(s => s.epoch === this.epoch);
     if (!shownInCurrentEpoch) {
       cue._shows.push({ epoch: this.epoch, at: vTime });
@@ -281,11 +291,19 @@ class SyncEngine {
   }
 
   /**
+   * Returns count of cues skipped during the last exportLog() call because they were never finalized.
+   * @returns {number}
+   */
+  getUnfinalizedCount() {
+    return this.unfinalizedDroppedCount;
+  }
+
+  /**
    * Exports strictly schema-valid cue log JSON matching docs/cue_log.schema.json.
    * Exactly 8 fields per cue: start, end, lang, text, translation, source, first_shown_at, revisions.
    * 
-   * Strict Rule: Only cues that were actually displayed (markShown called) are exported.
-   * Cues where markShown was never called are excluded from the log.
+   * Strict Rule: Only cues that were finalized and actually displayed as final are exported.
+   * Cues that were never finalized (is_final=false) or where markShown was never called are excluded.
    * 
    * Decision D1 (Seek-back re-show):
    * When reshow_entries is true (default ON), if a cue was re-displayed in subsequent epochs
@@ -299,9 +317,16 @@ class SyncEngine {
    */
   exportLog({ reshow_entries = true } = {}) {
     const paired = [];
+    let unfinalizedCount = 0;
     const cues = Array.from(this.store.values()).sort((a, b) => (a.start - b.start) || (a.end - b.end));
 
     for (const c of cues) {
+      // Do not fabricate first_shown_at for unfinalized cues
+      if (c.is_final === false || c.first_shown_at === null) {
+        unfinalizedCount += 1;
+        continue;
+      }
+
       const shows = c._shows && c._shows.length > 0
         ? c._shows
         : (c.first_shown_at !== null ? [{ epoch: c._epoch || 1, at: c.first_shown_at }] : []);
@@ -340,6 +365,7 @@ class SyncEngine {
 
     paired.sort((a, b) => (a.entry.start - b.entry.start) || (a.entry.first_shown_at - b.entry.first_shown_at));
     const result = paired.map(p => p.entry);
+    this.unfinalizedDroppedCount = unfinalizedCount;
     this._lastExportedLangs = paired.map(p => p.langs);
     this._lastExportedList = result;
     return result;
@@ -520,7 +546,10 @@ class SyncBridge {
         video_start_time: registered.video_start_time,
         playback_rate: registered.playback_rate
       };
-      this._chunkMetaMap.delete(result.chunk_id);
+      // Keep chunk registered if partial (is_final === false) so final result can resolve ctx
+      if (result.is_final !== false) {
+        this._chunkMetaMap.delete(result.chunk_id);
+      }
     }
 
     const outcome = this.engine.onResult(result, ctx);
@@ -528,6 +557,14 @@ class SyncBridge {
       this._tick();
     }
     return outcome;
+  }
+
+  /**
+   * Returns count of cues excluded from export because they were never finalized.
+   * @returns {number}
+   */
+  getUnfinalizedCount() {
+    return this.engine.getUnfinalizedCount();
   }
 
   /**

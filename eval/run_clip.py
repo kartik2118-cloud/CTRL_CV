@@ -17,6 +17,7 @@ Complies with docs/contract.md & docs/cue_log.schema.json:
 import argparse
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -155,7 +156,7 @@ async def stream_clip(
                         continue
                     elif msg_type == "error":
                         detail_text = str(res.get("detail", "")) + " " + str(res.get("message", ""))
-                        if "429" in detail_text or "rate limit" in detail_text.lower() or "rate_limit" in detail_text.lower():
+                        if re.search(r"\b429\b|rate[ _-]?limit", detail_text, re.IGNORECASE):
                             rate_limited = True
                             rate_limit_count += 1
                             if verbose:

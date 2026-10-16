@@ -157,6 +157,7 @@ This document provides unified diffs for the `backend/` codebase to align with t
 +        """
 +        Collects auto-detected language for the first 3 chunks.
 +        Locks session language to the majority vote after 3 samples.
++        Before lock is achieved, self.lang remains 'auto' so Whisper continues native detection.
 +        """
 +        if not self.is_auto_lang or self.lang_locked or not detected_lang:
 +            return self.lang
@@ -166,14 +167,13 @@ This document provides unified diffs for the `backend/` codebase to align with t
 +            majority_lang = Counter(self.auto_lang_samples).most_common(1)[0][0]
 +            self.lang = majority_lang
 +            self.lang_locked = True
-+        else:
-+            self.lang = detected_lang
++        # Notice: until locked, self.lang is NOT changed so Whisper receives no forced language param
 +        return self.lang
  
      def handle_seek(self, new_epoch: Optional[int] = None) -> int:
          """
          Advances the epoch to invalidate in-flight or older chunks.
-@@ -31,6 +57,11 @@ class SessionState:
+@@ -31,6 +57,12 @@ class SessionState:
          # Clear any pending chunk meta from the pre-seek period
          self.pending_meta = None
 +
@@ -181,6 +181,7 @@ This document provides unified diffs for the `backend/` codebase to align with t
 +        if self.is_auto_lang:
 +            self.lang_locked = False
 +            self.auto_lang_samples = []
++            self.lang = self.requested_lang
 +
          return self.epoch
  
@@ -191,17 +192,20 @@ This document provides unified diffs for the `backend/` codebase to align with t
 
 ## 3. Script-Share Code-Mixed Detection & `models.py` Diff
 
-### Script Share Rules:
-- Unicode ranges inspected:
-  - Devanagari (`\u0900` to `\u097F`): mapped to `"hi"` (or `"mr"`).
-  - Tamil (`\u0B80` to `\u0BFF`): mapped to `"ta"`.
-  - Telugu (`\u0C00` to `\u0C7F`): mapped to `"te"`.
-  - Latin (`a-z`, `A-Z`): mapped to `"en"`.
-- If both Indic share >= 0.20 and Latin share >= 0.20:
-  `langs = [dominant_code, secondary_code]` (both codes included).
-- Otherwise:
-  `langs = [dominant_code]`.
-- `lang = dominant_code`.
+### Script Share Rules (lang vs langs):
+- **Dominant Language (`lang`)**:
+  - Always preserved directly from Whisper's ISO detection (`seg.lang`).
+  - Marathi (`mr`) and Hindi (`hi`) share the same Devanagari script; script analysis cannot differentiate Marathi from Hindi. Therefore, `lang` must never be overridden by script counting.
+- **Multilingual Sidecar (`langs`)**:
+  - Computed via character script shares:
+    - Devanagari (`\u0900` - `\u097F`): Indic
+    - Tamil (`\u0B80` - `\u0BFF`): Indic
+    - Telugu (`\u0C00` - `\u0C7F`): Indic
+    - Latin (`a-z`, `A-Z`): Latin
+  - If both Indic share >= 0.20 and Latin share >= 0.20:
+    `langs = [dominant_iso, "en"]`.
+  - Otherwise:
+    `langs = [dominant_iso]`.
 
 ### Unified Diff: `backend/app/models.py`
 
@@ -235,75 +239,68 @@ This document provides unified diffs for the `backend/` codebase to align with t
 ## 4. Unified Diff: `backend/app/main.py`
 
 ### Changes:
-- Integrates `detect_script_langs` character analysis.
-- Calls `session.record_detected_lang` on each returned chunk.
+- Integrates `detect_script_code_mixed` character analysis.
+- Calls `session.record_detected_lang` on each chunk.
+- Preserves Whisper ISO detection (including `mr`) as `lang`.
 - Emits `is_final: True`, `langs: List[str]`, `lang: str`, `start_offset: float`, and `end_offset: float` matching `docs/contract.md`.
 
 ```diff
 --- a/backend/app/main.py
 +++ b/backend/app/main.py
-@@ -21,6 +21,50 @@ from app.session import SessionState
+@@ -21,6 +21,48 @@ from app.session import SessionState
  from app.providers.mock import MockSTTProvider, MockTranslationProvider
  
  
-+def detect_script_langs(text: str, fallback_lang: str = "en") -> tuple[str, list[str]]:
++def detect_script_code_mixed(text: str, dominant_lang: str = "en") -> list[str]:
 +    """
 +    Calculates character script shares for Indic vs Latin.
-+    If both Indic and Latin shares are >= 0.20, returns both languages.
-+    Returns (dominant_lang, langs_list).
++    If both Indic and Latin shares are >= 0.20, returns [dominant_lang, 'en'].
++    Preserves dominant_lang from Whisper ISO (including Marathi 'mr').
 +    """
 +    if not text:
-+        return fallback_lang, [fallback_lang]
++        return [dominant_lang]
 +
-+    counts = {"hi": 0, "ta": 0, "te": 0, "en": 0}
++    indic_letters = 0
++    latin_letters = 0
 +    total_letters = 0
 +
 +    for ch in text:
 +        cp = ord(ch)
-+        if 0x0900 <= cp <= 0x097F:
-+            counts["hi"] += 1
-+            total_letters += 1
-+        elif 0x0B80 <= cp <= 0x0BFF:
-+            counts["ta"] += 1
-+            total_letters += 1
-+        elif 0x0C00 <= cp <= 0x0C7F:
-+            counts["te"] += 1
++        # Devanagari, Tamil, Telugu Unicode ranges
++        if (0x0900 <= cp <= 0x097F) or (0x0B80 <= cp <= 0x0BFF) or (0x0C00 <= cp <= 0x0C7F):
++            indic_letters += 1
 +            total_letters += 1
 +        elif (0x0041 <= cp <= 0x005A) or (0x0061 <= cp <= 0x007A):
-+            counts["en"] += 1
++            latin_letters += 1
 +            total_letters += 1
 +
 +    if total_letters == 0:
-+        return fallback_lang, [fallback_lang]
++        return [dominant_lang]
 +
-+    indic_code = max(["hi", "ta", "te"], key=lambda k: counts[k])
-+    indic_count = counts[indic_code]
-+    latin_count = counts["en"]
-+
-+    indic_share = indic_count / total_letters
-+    latin_share = latin_count / total_letters
-+    dominant_lang = indic_code if indic_count >= latin_count else "en"
++    indic_share = indic_letters / total_letters
++    latin_share = latin_letters / total_letters
 +
 +    if indic_share >= 0.20 and latin_share >= 0.20:
-+        langs = [dominant_lang, "en" if dominant_lang == indic_code else indic_code]
-+    else:
-+        langs = [dominant_lang]
++        if dominant_lang == "en":
++            return ["en", "hi"]
++        return [dominant_lang, "en"]
 +
-+    return dominant_lang, langs
++    return [dominant_lang]
 +
- 
++
  logging.basicConfig(
-@@ -131,6 +175,10 @@ async def websocket_endpoint(websocket: WebSocket):
+@@ -131,6 +173,10 @@ async def websocket_endpoint(websocket: WebSocket):
                  for seg in results:
-+                    if hasattr(seg, "lang") and seg.lang:
-+                        session.record_detected_lang(seg.lang)
++                    detected_iso = getattr(seg, "lang", None) or session.lang
++                    if detected_iso and detected_iso != "auto":
++                        session.record_detected_lang(detected_iso)
 +
-+                    dominant_lang, script_langs = detect_script_langs(seg.text, fallback_lang=session.lang)
++                    langs_list = detect_script_code_mixed(seg.text, dominant_lang=detected_iso)
 +
                      # Key synchronization formula:
                      # t_video = video_start + offset_in_chunk * playback_rate
                      t_start = round(meta.video_start + seg.offset_start * meta.playback_rate, 3)
-@@ -148,8 +196,12 @@ async def websocket_endpoint(websocket: WebSocket):
+@@ -148,8 +194,12 @@ async def websocket_endpoint(websocket: WebSocket):
                      sub_res = SubtitleResult(
                          chunk_id=meta.chunk_id,
                          epoch=meta.epoch,
@@ -313,8 +310,8 @@ This document provides unified diffs for the `backend/` codebase to align with t
 -                        lang=session.lang,
 +                        start_offset=round(seg.offset_start, 3),
 +                        end_offset=round(seg.offset_end, 3),
-+                        lang=dominant_lang,
-+                        langs=script_langs,
++                        lang=detected_iso,
++                        langs=langs_list,
                          text=seg.text,
                          translation=translation,
                          source="stt"
@@ -344,9 +341,16 @@ from typing import List, Optional
 
 ---
 
-## 6. Test & Expected Contract Verification Output
+## 6. Role C Language Verification Test Cases
 
-After applying the diffs above, run `python eval/check_contract.py`.
+| Test Case | Speech Audio | Whisper Output | Expected `lang` | Expected `langs` | Rationale |
+|:---:|:---:|:---:|:---:|:---:|:---|
+| 1. Hindi | Hindi speech | `language: "hindi"`, text: `"आज का मौसम अच्छा है"` | `"hi"` | `["hi"]` | Devanagari script, pure Hindi audio |
+| 2. Marathi | Marathi speech | `language: "marathi"`, text: `"आजचा दिवस छान आहे"` | `"mr"` | `["mr"]` | Devanagari script, Whisper ISO correctly retains `mr` (not hijacked to `hi`) |
+| 3. Tamil | Tamil speech | `language: "tamil"`, text: `"இன்று வானிலை நன்றாக உள்ளது"` | `"ta"` | `["ta"]` | Tamil script, pure Tamil audio |
+| 4. Telugu | Telugu speech | `language: "telugu"`, text: `"ఈరోజు వాతావరణం బాగుంది"` | `"te"` | `["te"]` | Telugu script, pure Telugu audio |
+| 5. English | English speech | `language: "english"`, text: `"The weather today is great"` | `"en"` | `["en"]` | Latin script, pure English audio |
+| 6. Hinglish | Code-mixed Hindi + English | `language: "hindi"`, text: `"आज का weather बहुत nice है"` | `"hi"` | `["hi", "en"]` | Devanagari share = 0.43, Latin share = 0.57 (both >= 0.20) -> code-mixed sidecar |
 
 ### Expected `check_contract.py` Compliance Table:
 
@@ -379,3 +383,4 @@ CONTRACT SPECIFICATION COMPLIANCE TABLE
 - Code-Mixed langs Check: PASS (langs = ['hi'])
 - Extra Uncontracted Fields: None
 ```
+
