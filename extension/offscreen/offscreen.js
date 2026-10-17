@@ -136,12 +136,17 @@ async function startCapture(streamId, targetTabId = null) {
   // Proactively request initial video timeline anchor from target tab
   if (targetTabId) {
     try {
-      chrome.tabs.sendMessage(targetTabId, { action: 'GET_VIDEO_OBSERVATION' }, (resp) => {
-        if (chrome.runtime.lastError) return;
-        if (resp && resp.observation) {
-          applyVideoObservation(resp.observation);
-        }
+      const resp = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(null), 300);
+        chrome.tabs.sendMessage(targetTabId, { action: 'GET_VIDEO_OBSERVATION' }, (r) => {
+          clearTimeout(timer);
+          if (chrome.runtime.lastError) resolve(null);
+          else resolve(r);
+        });
       });
+      if (resp && resp.observation) {
+        applyVideoObservation(resp.observation);
+      }
     } catch (_) {}
   }
 
@@ -339,6 +344,8 @@ async function stopCapture() {
       audioContext = null;
     }
 
+    latestAnchor = null;
+    currentEpoch = 1;
     isCapturing = false;
     console.log('[Offscreen] Capture stopped and all audio processing resources cleaned up.');
     return { success: true };

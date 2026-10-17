@@ -87,11 +87,16 @@
           });
           const configured = result?.backend_url || result?.backendUrl;
           if (configured && typeof configured === 'string' && configured.trim()) {
-            return configured.trim();
+            const val = configured.trim();
+            if (!val.includes('REPLACE_ME')) {
+              return val;
+            }
           }
         } catch (_) {}
       }
-      return this.defaultUrl;
+      return (!this.defaultUrl || this.defaultUrl.includes('REPLACE_ME'))
+        ? 'ws://127.0.0.1:8000/ws'
+        : this.defaultUrl;
     }
 
     /**
@@ -192,9 +197,6 @@
       if (msg.type === 'hello_ack') {
         this.isHandshakeComplete = true;
         if (msg.session_id) this.sessionId = msg.session_id;
-        if (typeof msg.epoch === 'number' && msg.epoch > this.epoch) {
-          this.epoch = msg.epoch;
-        }
 
         // Transmit queued seek frame if pending
         if (this._pendingSeek && this.ws && this.ws.readyState === 1) {
@@ -364,7 +366,7 @@
 
       // Discontinuity triggered on: seek, navigation (video_id change), ad start or ad end, or epoch bump
       if (isEpochBump || isSeeking || isAdStart || isAdEnd || isVideoChange) {
-        const nextEpoch = isEpochBump ? obs.epoch : (this.epoch + 1);
+        const nextEpoch = typeof obs.epoch === 'number' ? obs.epoch : (this.epoch + 1);
         const reason = isVideoChange ? 'navigation' : (isAdStart ? 'ad_start' : (isAdEnd ? 'ad_end' : (isSeeking ? 'seek' : 'epoch_bump')));
         this.sendSeek(obs.video_current_time || 0.0, nextEpoch, reason);
         this.latestAnchor = obs;
@@ -376,7 +378,7 @@
       }
 
       this.latestAnchor = obs;
-      if (this.currentChunkVideoStartTime === null && typeof obs.video_current_time === 'number') {
+      if ((this.currentChunkVideoStartTime === null || (this.currentChunkVideoStartTime === 0.0 && this.bufferedSamples === 0 && this.chunkId === 0)) && typeof obs.video_current_time === 'number') {
         this.currentChunkVideoStartTime = obs.video_current_time;
       }
     }

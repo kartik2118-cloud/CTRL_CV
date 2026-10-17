@@ -18,30 +18,45 @@ const PLAYER_SELECTOR = '#movie_player, .html5-video-player, ytd-player';
 const POLL_INTERVAL_MS = 400;
 const MAX_POLL_ATTEMPTS = 30; // 12 seconds total
 
-// Language support
-const LANGUAGES = {
-  hindi: {
-    text: 'आज हम पनीर टिक्का बनाएंगे।',
-    translation: 'Today we will make paneer tikka.'
-  },
-  marathi: {
-    text: 'आज आपण पनीर टिक्का बनवणार आहोत.',
-    translation: 'Today we will make paneer tikka.'
-  },
-  english: {
-    text: 'Today we will make paneer tikka.',
-    translation: ''
-  }
+// Language support & sequential demo steps
+const DEMO_SEQUENCES = {
+  hindi: [
+    { text: 'नमस्ते! LiveSub में आपका स्वागत है।', translation: 'Welcome to LiveSub real-time transcription.', lang: 'HI / EN', duration: 2800 },
+    { text: 'यह तकनीक स्वचालित रूप से भाषा पहचानती है।', translation: 'This technology automatically detects and translates speech.', lang: 'HI / EN', duration: 2800 },
+    { text: 'आज हम स्वादिष्ट पनीर टिक्का रेसिपी देखेंगे।', translation: 'Today we will explore a delicious paneer tikka recipe.', lang: 'HI / EN', duration: 2800 },
+    { text: 'सेटिंग्स से आप फॉन्ट का आकार और स्थिति बदल सकते हैं।', translation: 'You can adjust font size and position from settings.', lang: 'HI / EN', duration: 2800 }
+  ],
+  marathi: [
+    { text: 'नमस्कार! LiveSub मध्ये आपले स्वागत आहे.', translation: 'Welcome to LiveSub real-time transcription.', lang: 'MR / EN', duration: 2800 },
+    { text: 'ही प्रणाली व्हिडिओचे थेट भाषांतर करते.', translation: 'This system provides live video translation.', lang: 'MR / EN', duration: 2800 },
+    { text: 'आज आपण पनीर टिक्का बनवणार आहोत.', translation: 'Today we will make paneer tikka.', lang: 'MR / EN', duration: 2800 },
+    { text: 'आपण सहजपणे उपशीर्षकाचा आकार बदलू शकता.', translation: 'You can easily adjust subtitle styling.', lang: 'MR / EN', duration: 2800 }
+  ],
+  english: [
+    { text: 'Welcome to LiveSub Real-Time Subtitles!', translation: 'AI-powered speech recognition and synchronization.', lang: 'EN', duration: 2800 },
+    { text: 'Zero-latency subtitle rendering with exact video sync.', translation: 'Adaptive seeking and epoch tracking active.', lang: 'EN', duration: 2800 },
+    { text: 'Multilingual dual-row subtitles for any YouTube video.', translation: 'Hindi, Marathi, Tamil, Telugu, and English supported.', lang: 'EN', duration: 2800 },
+    { text: 'Demo running smoothly! Turn ON to stream live speech.', translation: 'Toggle switch in popup to transcribe video in real time.', lang: 'EN', duration: 2800 }
+  ]
 };
 
-let selectedLanguage = 'english'; // default language
+const LANGUAGES = {
+  hindi: DEMO_SEQUENCES.hindi[2],
+  marathi: DEMO_SEQUENCES.marathi[2],
+  english: DEMO_SEQUENCES.english[0]
+};
+
+let selectedLanguage = 'hindi'; // default language
+let demoTimer = null;
+let isDemoRunning = false;
+window.__livesubIsDemoRunning = false;
 
 function getDemoCue(lang) {
   const lower = (lang || '').toLowerCase();
-  return LANGUAGES[lower] || LANGUAGES['english'];
+  return LANGUAGES[lower] || LANGUAGES['hindi'];
 }
 
-const DEMO_CUE = LANGUAGES['english'];
+const DEMO_CUE = LANGUAGES['hindi'];
 
 // ─── Module State ─────────────────────────────────────────────────────────────
 let overlayHostEl = null;
@@ -208,13 +223,61 @@ function showSubtitle({ text = '', translation = '', lang = '' } = {}) {
   return true;
 }
 
+function stopDemoSequence() {
+  if (demoTimer) {
+    clearTimeout(demoTimer);
+    demoTimer = null;
+  }
+  isDemoRunning = false;
+  window.__livesubIsDemoRunning = false;
+}
+
+function runDemoSequence(lang = selectedLanguage) {
+  stopDemoSequence();
+  initAll();
+
+  const key = (lang || 'hindi').toLowerCase();
+  const sequence = DEMO_SEQUENCES[key] || DEMO_SEQUENCES['hindi'];
+
+  isDemoRunning = true;
+  window.__livesubIsDemoRunning = true;
+
+  let stepIdx = 0;
+
+  function showNextStep() {
+    if (!isDemoRunning) return;
+    if (stepIdx >= sequence.length) {
+      demoTimer = setTimeout(() => {
+        clearSubtitle();
+        stopDemoSequence();
+      }, 2500);
+      return;
+    }
+
+    const currentStep = sequence[stepIdx];
+    showSubtitle({
+      text: currentStep.text,
+      translation: currentStep.translation,
+      lang: currentStep.lang || key.toUpperCase()
+    });
+
+    stepIdx++;
+    demoTimer = setTimeout(showNextStep, currentStep.duration || 2800);
+  }
+
+  showNextStep();
+}
+
 function clearSubtitle() {
+  stopDemoSequence();
   showSubtitle({ text: '', translation: '', lang: '' });
 }
 
-// Expose render callbacks on window for pipeline.js
+// Expose render callbacks and demo runners on window for pipeline.js and popup
 window.__livesubRenderSubtitle = showSubtitle;
 window.__livesubClearSubtitle = clearSubtitle;
+window.__livesubRunDemo = runDemoSequence;
+window.__livesubStopDemo = stopDemoSequence;
 
 function updateStyle({ fontSize, color, position } = {}) {
   if (fontSize !== undefined) {
@@ -482,8 +545,7 @@ function attachControls(player) {
   demoBtn.style.cssText = 'flex:1;padding:5px;border:none;border-radius:4px;background:#ff4444;color:#fff;cursor:pointer;font-weight:600;font-size:11px;';
   demoBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const cue = getDemoCue(selectedLanguage);
-    showSubtitle(cue);
+    runDemoSequence(selectedLanguage);
   });
 
   const clearBtn = document.createElement('button');
@@ -491,6 +553,7 @@ function attachControls(player) {
   clearBtn.style.cssText = 'flex:1;padding:5px;border:1px solid #555;border-radius:4px;background:#333;color:#eee;cursor:pointer;font-size:11px;';
   clearBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    stopDemoSequence();
     clearSubtitle();
   });
 
@@ -575,6 +638,25 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
     const currentTime = video ? video.currentTime : null;
 
     switch (message.action) {
+      case 'RUN_DEMO': {
+        const lang = message.lang || selectedLanguage;
+        runDemoSequence(lang);
+        sendResponse({
+          status: 'demo_started',
+          lang
+        });
+        return true;
+      }
+
+      case 'STOP_DEMO': {
+        stopDemoSequence();
+        clearSubtitle();
+        sendResponse({
+          status: 'demo_stopped'
+        });
+        return true;
+      }
+
       case 'SHOW_SUBTITLE':
       case 'RENDER_SUBTITLE': {
         const ok = showSubtitle({
@@ -593,6 +675,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       }
 
       case 'CLEAR_SUBTITLE': {
+        stopDemoSequence();
         clearSubtitle();
         sendResponse({
           status: 'cleared',
@@ -602,8 +685,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       }
 
       case 'SET_ENABLED': {
+        stopDemoSequence();
+        clearSubtitle();
         if (message.enabled === false) {
-          clearSubtitle();
           if (overlayHostEl) overlayHostEl.style.display = 'none';
         } else {
           if (!overlayHostEl || !rowSourceEl) {

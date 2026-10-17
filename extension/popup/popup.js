@@ -11,17 +11,32 @@
 'use strict';
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab || null;
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tabs && tabs[0]) return tabs[0];
+  const lastTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return lastTabs?.[0] || null;
 }
 
 async function sendToActiveTab(message) {
   const tab = await getActiveTab();
-  if (!tab?.id) return;
+  if (!tab?.id) return null;
   try {
-    await chrome.tabs.sendMessage(tab.id, message);
+    return await chrome.tabs.sendMessage(tab.id, message);
   } catch (e) {
-    console.warn('[LiveSub Popup] Could not reach content script:', e.message);
+    console.warn('[LiveSub Popup] Could not reach content script directly. Attempting injection fallback:', e.message);
+    if (chrome.scripting && tab.id) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['vendor/syncEngine.browser.js', 'content/content.js', 'content/pipeline.js']
+        });
+        await new Promise(r => setTimeout(r, 120));
+        return await chrome.tabs.sendMessage(tab.id, message);
+      } catch (injErr) {
+        console.warn('[LiveSub Popup] Script injection fallback skipped:', injErr.message);
+      }
+    }
+    return null;
   }
 }
 
@@ -185,16 +200,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ─── 4. Demo & Clear Subtitle Buttons ─────────────────────────────────────────
-  document.getElementById('btn-demo')?.addEventListener('click', () => {
-    sendToActiveTab({
-      action: 'SHOW_SUBTITLE',
-      text: 'आज हम पनीर टिक्का बनाएंगे।',
-      translation: 'Today we will make paneer tikka.'
+  document.getElementById('btn-demo')?.addEventListener('click', async () => {
+    const srcLang = sourceLangSelect?.value || 'hindi';
+    await sendToActiveTab({
+      action: 'RUN_DEMO',
+      lang: srcLang === 'auto' ? 'hindi' : srcLang
     });
   });
 
-  document.getElementById('btn-clear')?.addEventListener('click', () => {
-    sendToActiveTab({ action: 'CLEAR_SUBTITLE' });
+  document.getElementById('btn-clear')?.addEventListener('click', async () => {
+    await sendToActiveTab({ action: 'CLEAR_SUBTITLE' });
   });
 
   // ─── 5. Export Cue Log ────────────────────────────────────────────────────────

@@ -82,10 +82,16 @@
 
   function onBridgeRender(visibleCues) {
     if (!visibleCues || visibleCues.length === 0) {
+      if (window.__livesubIsDemoRunning) {
+        return;
+      }
       if (typeof window.__livesubClearSubtitle === 'function') {
         window.__livesubClearSubtitle();
       }
     } else {
+      if (typeof window.__livesubStopDemo === 'function') {
+        window.__livesubStopDemo();
+      }
       const combinedText = visibleCues.map(c => c.text).filter(Boolean).join('\n');
       const combinedTrans = visibleCues.map(c => c.translation).filter(Boolean).join('\n');
       const allLangs = [...new Set(visibleCues.flatMap(c => c._langs || (Array.isArray(c.langs) ? c.langs : [c.lang])).filter(Boolean))];
