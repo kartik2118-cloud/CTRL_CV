@@ -54,10 +54,29 @@ class LLMTranslationProvider(TranslationProvider):
             "Content-Type": "application/json"
         }
 
+        LANG_NAMES = {
+            "hi": "Hindi",
+            "en": "English",
+            "mr": "Marathi",
+            "ta": "Tamil",
+            "te": "Telugu",
+            "kn": "Kannada",
+            "gu": "Gujarati",
+            "bn": "Bengali",
+            "pa": "Punjabi",
+            "ml": "Malayalam",
+            "es": "Spanish",
+            "fr": "French",
+            "de": "German",
+            "auto": "the spoken language"
+        }
+        t_name = LANG_NAMES.get(target_lang.lower(), target_lang)
+
         prompt = (
-            f"You are a subtitle translator. Translate the following speech text from {source_lang} to {target_lang}.\n"
-            f"Output ONLY the translated subtitle text, with no explanations, no formatting, and no quotation marks.\n\n"
-            f"Source text: {clean_text}"
+            f"You are a live video subtitle translator. Translate the following speech text to {t_name}.\n"
+            f"Maintain the conversational tone, brevity, and emotion suited for video subtitles.\n"
+            f"Output ONLY the translated subtitle text, with no explanations, notes, or quotes.\n\n"
+            f"Text: {clean_text}"
         )
 
         payload = {

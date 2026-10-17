@@ -213,6 +213,7 @@ async function startCapture(streamId, targetTabId = null) {
         if (chrome.runtime.lastError) {}
       });
       wsClient = new WsClientClass({
+        targetChunkDuration: 2.5,
         initialEpoch: currentEpoch,
         initialPlaybackRate: latestAnchor ? latestAnchor.playback_rate : 1.0,
         onChunkSent: (chunkInfo) => {

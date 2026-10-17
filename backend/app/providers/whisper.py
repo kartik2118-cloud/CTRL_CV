@@ -60,10 +60,11 @@ class WhisperSTTProvider(STTProvider):
         }
         data = {
             "model": self.model,
-            "language": lang.lower() if lang else "en",
             "response_format": "verbose_json",
             "temperature": "0.0"
         }
+        if lang and lang.lower() not in ("auto", "none", ""):
+            data["language"] = lang.lower()
 
         async with httpx.AsyncClient(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
             response = await client.post(self.endpoint, headers=headers, data=data, files=files)
