@@ -100,10 +100,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Language selectors change listeners
   sourceLangSelect?.addEventListener('change', async () => {
     await chrome.storage.local.set({ source_lang: sourceLangSelect.value });
+    chrome.runtime.sendMessage({
+      target: 'offscreen',
+      type: 'UPDATE_LANGUAGES',
+      source_lang: sourceLangSelect.value,
+      target_lang: targetLangSelect?.value
+    }).catch(() => {});
   });
 
   targetLangSelect?.addEventListener('change', async () => {
     await chrome.storage.local.set({ target_lang: targetLangSelect.value });
+    chrome.runtime.sendMessage({
+      target: 'offscreen',
+      type: 'UPDATE_LANGUAGES',
+      source_lang: sourceLangSelect?.value,
+      target_lang: targetLangSelect.value
+    }).catch(() => {});
   });
 
   function updateToggleLabel(active) {

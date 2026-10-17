@@ -43,19 +43,14 @@
     return player.classList.contains('ad-showing') || document.querySelector('.ad-showing, .ad-interrupting, .video-ads') !== null;
   }
 
-  function sendVideoObservation(force = false) {
-    const now = Date.now();
-    if (!force && (now - lastObservationMs < 250)) {
-      return;
-    }
-    lastObservationMs = now;
-
+  function getVideoObservationPayload() {
     const video = activeVideoEl || document.querySelector('#movie_player video') || document.querySelector('video');
-    if (!video) return;
+    if (!video) return null;
 
     const adState = isAdShowing() ? 'ad_playing' : 'main_video';
-    const obs = {
-      epoch: bridge ? bridge.getEpoch() : 0,
+    const now = Date.now();
+    return {
+      epoch: bridge ? bridge.getEpoch() : 1,
       video_id: getVideoId(),
       video_current_time: Number((video.currentTime || 0).toFixed(6)),
       playback_rate: video.playbackRate || 1.0,
@@ -64,6 +59,17 @@
       ad_state: adState,
       wall_time_ms: now
     };
+  }
+
+  function sendVideoObservation(force = false) {
+    const now = Date.now();
+    if (!force && (now - lastObservationMs < 250)) {
+      return;
+    }
+    lastObservationMs = now;
+
+    const obs = getVideoObservationPayload();
+    if (!obs) return;
 
     try {
       chrome.runtime.sendMessage({
@@ -240,8 +246,30 @@
       return true;
     }
 
+    if (action === 'SET_ENABLED') {
+      if (message.enabled !== false) {
+        sendVideoObservation(true);
+      }
+      return false;
+    }
+
+    if (action === 'GET_VIDEO_OBSERVATION' || action === 'REQUEST_VIDEO_OBSERVATION') {
+      const obs = getVideoObservationPayload();
+      sendResponse({ success: true, observation: obs });
+      sendVideoObservation(true);
+      return true;
+    }
+
     return false;
   });
+
+  // Periodic observation heartbeat while playing (every 250ms)
+  setInterval(() => {
+    const video = activeVideoEl || document.querySelector('#movie_player video') || document.querySelector('video');
+    if (video && !video.paused) {
+      sendVideoObservation(false);
+    }
+  }, 250);
 
   // 7. Expose Judge Export Hooks on Window
   window.__ctrlcvExportCueLog = function(asString = false) {

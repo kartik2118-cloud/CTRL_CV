@@ -54,7 +54,7 @@
       this.onOpen = options.onOpen || null;
       this.onClose = options.onClose || null;
 
-      this.epoch = typeof options.initialEpoch === 'number' ? options.initialEpoch : 0;
+      this.epoch = typeof options.initialEpoch === 'number' ? options.initialEpoch : 1;
       this.playbackRate = typeof options.initialPlaybackRate === 'number' ? options.initialPlaybackRate : 1.0;
       this.latestAnchor = null;
       this.currentChunkVideoStartTime = null;
@@ -192,7 +192,7 @@
       if (msg.type === 'hello_ack') {
         this.isHandshakeComplete = true;
         if (msg.session_id) this.sessionId = msg.session_id;
-        if (typeof msg.epoch === 'number') {
+        if (typeof msg.epoch === 'number' && msg.epoch > this.epoch) {
           this.epoch = msg.epoch;
         }
 
@@ -206,7 +206,14 @@
         return;
       }
 
-      if (msg.type === 'seek_ack' || msg.type === 'config_ack') {
+      if (msg.type === 'seek_ack') {
+        if (typeof msg.epoch === 'number' && msg.epoch >= this.epoch) {
+          this.epoch = msg.epoch;
+        }
+        return;
+      }
+
+      if (msg.type === 'config_ack') {
         return;
       }
 
@@ -264,6 +271,7 @@
         end: end,
         start_offset: startOffset,
         end_offset: endOffset,
+        playback_rate: playbackRate,
         is_final: msg.is_final !== undefined ? Boolean(msg.is_final) : true,
         lang: msg.lang || langs[0] || 'hi',
         langs: langs,
@@ -288,7 +296,7 @@
      * @returns {Object} The seek message sent
      */
     sendSeek(videoTime = 0, newEpoch = null, reason = 'seek') {
-      this.epoch = (typeof newEpoch === 'number' && newEpoch > this.epoch)
+      this.epoch = (typeof newEpoch === 'number')
         ? newEpoch
         : (this.epoch + 1);
 
@@ -506,6 +514,28 @@
         pcm: merged,
         chunkSentEvent
       };
+    }
+
+    /**
+     * Updates language settings dynamically and sends config frame to backend.
+     * @param {string} [lang] Source language code
+     * @param {string|null} [targetLang] Target translation language code
+     */
+    updateLanguages(lang, targetLang) {
+      if (lang) this.lang = lang;
+      if (targetLang !== undefined) {
+        this.targetLang = (targetLang === 'none' ? null : targetLang);
+      }
+      if (this.ws && this.ws.readyState === 1 && this.isHandshakeComplete) {
+        const cfg = {
+          type: 'config',
+          lang: (this.lang === 'auto' || !this.lang) ? null : this.lang,
+          target_lang: this.targetLang
+        };
+        try {
+          this.ws.send(JSON.stringify(cfg));
+        } catch (_) {}
+      }
     }
 
     /**

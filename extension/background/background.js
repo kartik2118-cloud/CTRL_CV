@@ -87,6 +87,33 @@ async function sendMessageToOffscreenWithRetry(message, maxAttempts = 25, interv
   throw new Error('No response received from offscreen document');
 }
 
+async function ensureContentScript(tabId) {
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { action: 'GET_STATUS' });
+    if (ping && ping.isAttached !== undefined) return;
+  } catch (_) {}
+
+  try {
+    if (chrome.scripting) {
+      await chrome.scripting.insertCSS({
+        target: { tabId },
+        files: ['content/content.css']
+      }).catch(() => {});
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: [
+          'vendor/syncEngine.browser.js',
+          'content/pipeline.js',
+          'content/content.js'
+        ]
+      });
+      console.log(`[LiveSub BG] Injected content scripts into tab ${tabId}`);
+    }
+  } catch (err) {
+    console.warn(`[LiveSub BG] Script injection fallback skipped:`, err?.message || err);
+  }
+}
+
 async function handleStartCapture(targetTabId) {
   if (captureSession && (captureSession.state === 'capturing' || captureSession.state === 'starting')) {
     console.warn('[LiveSub BG] Capture already active for tab', captureSession.targetTabId);
@@ -110,6 +137,7 @@ async function handleStartCapture(targetTabId) {
       throw new Error(`Tab ${targetTabId} not found`);
     }
 
+    await ensureContentScript(targetTabId);
     await ensureOffscreenDocument();
 
     const streamId = await new Promise((resolve, reject) => {

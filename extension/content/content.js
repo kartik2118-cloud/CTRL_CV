@@ -14,7 +14,7 @@
 // ─── Constants ────────────────────────────────────────────────────────────────
 const OVERLAY_HOST_ID = 'livesub-overlay-host';
 const CONTROLS_PANEL_ID = 'livesub-controls-panel';
-const PLAYER_SELECTOR = '#movie_player';
+const PLAYER_SELECTOR = '#movie_player, .html5-video-player, ytd-player';
 const POLL_INTERVAL_MS = 400;
 const MAX_POLL_ATTEMPTS = 30; // 12 seconds total
 
@@ -181,7 +181,14 @@ function getShadowStyles() {
 
 // ─── Renderer API (Phase 4 Contract) ──────────────────────────────────────────
 function showSubtitle({ text = '', translation = '', lang = '' } = {}) {
+  if (!rowSourceEl || !rowTransEl || !overlayHostEl) {
+    initAll();
+  }
   if (!rowSourceEl || !rowTransEl) return false;
+
+  if (overlayHostEl && overlayHostEl.style.display === 'none') {
+    overlayHostEl.style.display = 'block';
+  }
 
   const cleanText = (text || '').trim();
   const cleanTrans = (translation || '').trim();
@@ -240,6 +247,15 @@ function attachOverlay(player) {
 
   const existing = player.querySelector(`#${OVERLAY_HOST_ID}`);
   if (existing) {
+    overlayHostEl = existing;
+    if (existing.shadowRoot) {
+      shadowRootEl = existing.shadowRoot;
+      subtitleBoxEl = shadowRootEl.querySelector('#livesub-box');
+      rowLangEl = shadowRootEl.querySelector('.sub-lang-badge');
+      rowSourceEl = shadowRootEl.querySelector('.sub-row.source');
+      rowTransEl = shadowRootEl.querySelector('.sub-row.translation');
+    }
+    playerElement = player;
     return true;
   }
 
@@ -590,6 +606,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
           clearSubtitle();
           if (overlayHostEl) overlayHostEl.style.display = 'none';
         } else {
+          if (!overlayHostEl || !rowSourceEl) {
+            initAll();
+          }
           if (overlayHostEl) overlayHostEl.style.display = 'block';
         }
         sendResponse({

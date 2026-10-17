@@ -11,7 +11,7 @@ let isCapturing = false;
 // Timing and video anchor state
 let sessionId = 'sess_' + Date.now();
 let currentVideoId = null;
-let currentEpoch = 0;
+let currentEpoch = 1;
 let latestAnchor = null;
 let wsClient = null;
 let currentTargetTabId = null;
@@ -95,12 +95,55 @@ function recordDiagnostic(rawMeta) {
   );
 }
 
+function applyVideoObservation(obs) {
+  if (!obs) return;
+
+  // Stale observation check
+  if (typeof obs.epoch === 'number' && obs.epoch < currentEpoch) {
+    console.warn(`[Offscreen] Stale observation ignored: epoch ${obs.epoch} < current ${currentEpoch}`);
+    return;
+  }
+
+  // Discontinuity or epoch bump
+  if (obs.video_id !== currentVideoId || (typeof obs.epoch === 'number' && obs.epoch > currentEpoch)) {
+    currentVideoId = obs.video_id;
+    if (typeof obs.epoch === 'number') {
+      currentEpoch = obs.epoch;
+    }
+    console.log(`[Offscreen] Discontinuity detected: video_id=${currentVideoId}, epoch=${currentEpoch}`);
+    if (workletNode && workletNode.port) {
+      workletNode.port.postMessage({
+        type: 'DISCONTINUITY',
+        epoch: currentEpoch,
+        video_id: currentVideoId
+      });
+    }
+  }
+
+  latestAnchor = obs;
+  if (wsClient) {
+    wsClient.updateVideoObservation(obs);
+  }
+}
+
 async function startCapture(streamId, targetTabId = null) {
   if (isCapturing) {
     console.warn('[Offscreen] Capture already running. Ignoring duplicate start.');
     return { success: true, message: 'Already capturing' };
   }
   currentTargetTabId = targetTabId;
+
+  // Proactively request initial video timeline anchor from target tab
+  if (targetTabId) {
+    try {
+      chrome.tabs.sendMessage(targetTabId, { action: 'GET_VIDEO_OBSERVATION' }, (resp) => {
+        if (chrome.runtime.lastError) return;
+        if (resp && resp.observation) {
+          applyVideoObservation(resp.observation);
+        }
+      });
+    } catch (_) {}
+  }
 
   try {
     // 1. Consume the tab stream ID promptly using audio-only getUserMedia
@@ -193,6 +236,9 @@ async function startCapture(streamId, targetTabId = null) {
 
       if (latestAnchor) {
         wsClient.updateVideoObservation(latestAnchor);
+        wsClient.sendSeek(latestAnchor.video_current_time || 0.0, currentEpoch, 'init');
+      } else {
+        wsClient.sendSeek(0.0, currentEpoch, 'init');
       }
 
       wsClient.connect().catch((err) => {
@@ -323,33 +369,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+
+
   if (message.type === 'VIDEO_STATE_OBSERVATION') {
-    const obs = message.observation;
-    if (!obs) return false;
+    applyVideoObservation(message.observation);
+    return false;
+  }
 
-    // Check for stale observation
-    if (obs.epoch < currentEpoch) {
-      console.warn(`[Offscreen] Stale observation ignored: epoch ${obs.epoch} < current ${currentEpoch}`);
-      return false;
-    }
-
-    // Check for discontinuity or video change
-    if (obs.video_id !== currentVideoId || obs.epoch > currentEpoch) {
-      currentVideoId = obs.video_id;
-      currentEpoch = obs.epoch;
-      console.log(`[Offscreen] Discontinuity detected: video_id=${currentVideoId}, epoch=${currentEpoch}`);
-      if (workletNode && workletNode.port) {
-        workletNode.port.postMessage({
-          type: 'DISCONTINUITY',
-          epoch: currentEpoch,
-          video_id: currentVideoId
-        });
-      }
-    }
-
-    latestAnchor = obs;
+  if (message.type === 'UPDATE_LANGUAGES') {
     if (wsClient) {
-      wsClient.updateVideoObservation(obs);
+      wsClient.updateLanguages(message.source_lang, message.target_lang);
     }
     return false;
   }
