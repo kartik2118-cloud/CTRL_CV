@@ -20,24 +20,29 @@ async function getActiveTab() {
 async function sendToActiveTab(message) {
   const tab = await getActiveTab();
   if (!tab?.id) return null;
+
+  let resp = null;
   try {
-    return await chrome.tabs.sendMessage(tab.id, message);
-  } catch (e) {
-    console.warn('[LiveSub Popup] Could not reach content script directly. Attempting injection fallback:', e.message);
+    resp = await chrome.tabs.sendMessage(tab.id, message);
+  } catch (_) {}
+
+  // If content script was not reached or old content script ignored RUN_DEMO, re-inject!
+  if (!resp || (message.action === 'RUN_DEMO' && resp?.status !== 'demo_started')) {
     if (chrome.scripting && tab.id) {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          files: ['vendor/syncEngine.browser.js', 'content/content.js', 'content/pipeline.js']
+          files: ['vendor/syncEngine.browser.js', 'content/pipeline.js', 'content/content.js']
         });
         await new Promise(r => setTimeout(r, 120));
-        return await chrome.tabs.sendMessage(tab.id, message);
+        resp = await chrome.tabs.sendMessage(tab.id, message);
       } catch (injErr) {
         console.warn('[LiveSub Popup] Script injection fallback skipped:', injErr.message);
       }
     }
-    return null;
   }
+
+  return resp;
 }
 
 // ─── 1. Storage & Settings Initialization ─────────────────────────────────────
@@ -200,15 +205,87 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ─── 4. Demo & Clear Subtitle Buttons ─────────────────────────────────────────
+  let popupDemoTimer = null;
+  function runPopupDemo(lang = 'hindi') {
+    if (popupDemoTimer) {
+      clearTimeout(popupDemoTimer);
+      popupDemoTimer = null;
+    }
+
+    const card = document.getElementById('demo-preview-card');
+    const badge = document.getElementById('demo-preview-badge');
+    const source = document.getElementById('demo-preview-source');
+    const trans = document.getElementById('demo-preview-trans');
+    if (!card || !source) return;
+
+    const DEMO_SEQUENCES = {
+      hindi: [
+        { text: 'नमस्ते! LiveSub में आपका स्वागत है।', translation: 'Welcome to LiveSub real-time transcription.', lang: 'HI / EN' },
+        { text: 'यह तकनीक स्वचालित रूप से भाषा पहचानती है।', translation: 'This technology automatically detects and translates speech.', lang: 'HI / EN' },
+        { text: 'आज हम स्वादिष्ट पनीर टिक्का रेसिपी देखेंगे।', translation: 'Today we will explore a delicious paneer tikka recipe.', lang: 'HI / EN' },
+        { text: 'सेटिंग्स से आप फॉन्ट का आकार और स्थिति बदल सकते हैं।', translation: 'You can adjust font size and position from settings.', lang: 'HI / EN' }
+      ],
+      marathi: [
+        { text: 'नमस्कार! LiveSub मध्ये आपले स्वागत आहे.', translation: 'Welcome to LiveSub real-time transcription.', lang: 'MR / EN' },
+        { text: 'ही प्रणाली व्हिडिओचे थेट भाषांतर करते.', translation: 'This system provides live video translation.', lang: 'MR / EN' },
+        { text: 'आज आपण पनीर टिक्का बनवणार आहोत.', translation: 'Today we will make paneer tikka.', lang: 'MR / EN' }
+      ],
+      english: [
+        { text: 'Welcome to LiveSub Real-Time Subtitles!', translation: 'AI-powered speech recognition and synchronization.', lang: 'EN' },
+        { text: 'Zero-latency subtitle rendering with exact video sync.', translation: 'Adaptive seeking and epoch tracking active.', lang: 'EN' },
+        { text: 'Multilingual dual-row subtitles for any YouTube video.', translation: 'Hindi, Marathi, Tamil, Telugu, and English supported.', lang: 'EN' }
+      ]
+    };
+
+    const key = (lang || 'hindi').toLowerCase();
+    const seq = DEMO_SEQUENCES[key] || DEMO_SEQUENCES['hindi'];
+
+    card.style.display = 'block';
+    let idx = 0;
+
+    function renderNext() {
+      if (idx >= seq.length) {
+        popupDemoTimer = setTimeout(() => {
+          card.style.display = 'none';
+        }, 3000);
+        return;
+      }
+      const item = seq[idx];
+      if (badge) badge.textContent = item.lang || 'LIVE DEMO';
+      if (source) source.textContent = item.text;
+      if (trans) trans.textContent = item.translation || '';
+      idx++;
+      popupDemoTimer = setTimeout(renderNext, 2800);
+    }
+
+    renderNext();
+  }
+
+  function stopPopupDemo() {
+    if (popupDemoTimer) {
+      clearTimeout(popupDemoTimer);
+      popupDemoTimer = null;
+    }
+    const card = document.getElementById('demo-preview-card');
+    if (card) card.style.display = 'none';
+  }
+
   document.getElementById('btn-demo')?.addEventListener('click', async () => {
     const srcLang = sourceLangSelect?.value || 'hindi';
+    const langKey = srcLang === 'auto' ? 'hindi' : srcLang;
+
+    // 1. Immediately run animated preview directly inside popup
+    runPopupDemo(langKey);
+
+    // 2. Dispatch to active video tab
     await sendToActiveTab({
       action: 'RUN_DEMO',
-      lang: srcLang === 'auto' ? 'hindi' : srcLang
+      lang: langKey
     });
   });
 
   document.getElementById('btn-clear')?.addEventListener('click', async () => {
+    stopPopupDemo();
     await sendToActiveTab({ action: 'CLEAR_SUBTITLE' });
   });
 

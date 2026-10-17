@@ -14,7 +14,14 @@
 // ─── Constants ────────────────────────────────────────────────────────────────
 const OVERLAY_HOST_ID = 'livesub-overlay-host';
 const CONTROLS_PANEL_ID = 'livesub-controls-panel';
-const PLAYER_SELECTOR = '#movie_player, .html5-video-player, ytd-player';
+const PLAYER_SELECTOR = '#movie_player, .html5-video-player, ytd-player, #shorts-player, ytd-shorts';
+
+function getPlayerElement() {
+  return document.querySelector(PLAYER_SELECTOR) ||
+         document.querySelector('video')?.parentElement ||
+         document.body;
+}
+
 const POLL_INTERVAL_MS = 400;
 const MAX_POLL_ATTEMPTS = 30; // 12 seconds total
 
@@ -196,7 +203,7 @@ function getShadowStyles() {
 
 // ─── Renderer API (Phase 4 Contract) ──────────────────────────────────────────
 function showSubtitle({ text = '', translation = '', lang = '' } = {}) {
-  if (!rowSourceEl || !rowTransEl || !overlayHostEl) {
+  if (!rowSourceEl || !rowTransEl || !overlayHostEl || !overlayHostEl.isConnected) {
     initAll();
   }
   if (!rowSourceEl || !rowTransEl) return false;
@@ -308,9 +315,11 @@ function updateStyle({ fontSize, color, position } = {}) {
 function attachOverlay(player) {
   if (!player) return false;
 
+  const isBody = player === document.body;
   const existing = player.querySelector(`#${OVERLAY_HOST_ID}`);
   if (existing) {
     overlayHostEl = existing;
+    existing.style.display = 'block';
     if (existing.shadowRoot) {
       shadowRootEl = existing.shadowRoot;
       subtitleBoxEl = shadowRootEl.querySelector('#livesub-box');
@@ -318,18 +327,26 @@ function attachOverlay(player) {
       rowSourceEl = shadowRootEl.querySelector('.sub-row.source');
       rowTransEl = shadowRootEl.querySelector('.sub-row.translation');
     }
-    playerElement = player;
-    return true;
+    if (!subtitleBoxEl || !rowSourceEl || !rowTransEl) {
+      existing.remove();
+    } else {
+      playerElement = player;
+      return true;
+    }
   }
 
-  const computedPos = window.getComputedStyle(player).position;
-  if (computedPos === 'static') {
-    player.style.position = 'relative';
+  if (!isBody) {
+    const computedPos = window.getComputedStyle(player).position;
+    if (computedPos === 'static') {
+      player.style.position = 'relative';
+    }
   }
 
   const host = document.createElement('div');
   host.id = OVERLAY_HOST_ID;
-  host.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2147483640;';
+  host.style.cssText = isBody
+    ? 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483647;display:block;'
+    : 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2147483640;display:block;';
 
   const shadow = host.attachShadow({ mode: 'open' });
   const styleEl = document.createElement('style');
@@ -659,6 +676,12 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
 
       case 'SHOW_SUBTITLE':
       case 'RENDER_SUBTITLE': {
+        window.__livesubIsDemoRunning = true;
+        if (demoTimer) clearTimeout(demoTimer);
+        demoTimer = setTimeout(() => {
+          window.__livesubIsDemoRunning = false;
+        }, 3500);
+
         const ok = showSubtitle({
           text: message.text || '',
           translation: message.translation || '',
@@ -740,10 +763,12 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
 
 // ─── Setup & Player Replacement ───────────────────────────────────────────────
 function initAll() {
-  const player = document.querySelector(PLAYER_SELECTOR);
+  const player = getPlayerElement();
   if (player) {
     attachOverlay(player);
-    attachControls(player);
+    if (player !== document.body) {
+      attachControls(player);
+    }
     currentVideoId = getVideoIdFromUrl();
     return true;
   }
