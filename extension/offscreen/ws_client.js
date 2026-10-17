@@ -148,6 +148,7 @@
           const helloMsg = {
             type: 'hello',
             client_id: this.sessionId,
+            epoch: this.epoch,
             lang: (this.lang === 'auto' || !this.lang) ? 'auto' : this.lang,
             target_lang: (this.targetLang && this.targetLang !== 'none') ? this.targetLang : null,
             video_id: this.currentVideoId || null

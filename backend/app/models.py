@@ -11,6 +11,7 @@ class HelloMessage(BaseModel):
     target_lang: Optional[str] = None
     token: Optional[str] = None
     video_id: Optional[str] = None
+    epoch: Optional[int] = None
 
 
 class ChunkMetaMessage(BaseModel):
