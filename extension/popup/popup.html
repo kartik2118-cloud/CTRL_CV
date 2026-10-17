@@ -270,10 +270,40 @@
     <strong>Cloud Audio Notice:</strong> Audio from this tab is streamed to a cloud speech recognition service for live transcription and translation.
   </div>
 
-  <!-- Status Bar -->
-  <div class="status-section">
-    <span class="status-indicator" id="status-indicator"></span>
-    <span class="status-text" id="status-text">Idle</span>
+  <!-- Backend URL Validation Error Banner (K3) -->
+  <div id="url-error-banner" style="display:none; background:#b91c1c; border:1px solid #ef4444; border-radius:6px; padding:8px 10px; font-size:11px; font-weight:600; color:#ffffff; margin-bottom:12px; text-align:center;">
+    ⚠️ Backend URL set nahi hai
+  </div>
+
+  <!-- Status Bar & HUD Telemetry (K2) -->
+  <div class="status-section" style="flex-direction:column; align-items:stretch; gap:6px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="status-indicator" id="status-indicator"></span>
+      <span class="status-text" id="status-text">Idle</span>
+    </div>
+    <div id="hud-status-row" style="display:flex; flex-direction:column; gap:2px; font-family:monospace; font-size:10px; color:#a1a1aa; border-top:1px solid #3f3f46; padding-top:4px;">
+      <div style="display:flex; justify-content:space-between;">
+        <span>Chunks: <b id="hud-chunks" style="color:#facc15;">0</b></span>
+        <span>Results: <b id="hud-results" style="color:#4ade80;">0</b></span>
+        <span>Epoch: <b id="hud-epoch" style="color:#cbd5e1;">1</b></span>
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <span>Age: <b id="hud-age" style="color:#cbd5e1;">n/a</b></span>
+        <span>WS: <b id="hud-ws" style="color:#a78bfa;">disconnected</b></span>
+      </div>
+      <div>Error: <span id="hud-error" style="color:#f87171;">none</span></div>
+    </div>
+  </div>
+
+  <!-- Debug HUD Toggle (K2) -->
+  <div class="toggle-section" style="margin-bottom:8px; padding:6px 12px;">
+    <div class="toggle-label" style="font-size:11px; color:#d4d4d8;">Debug HUD (On-Screen Badge)</div>
+    <div class="switch-container">
+      <label class="switch" style="width:34px; height:18px;">
+        <input type="checkbox" id="toggle-debug-hud" checked>
+        <span class="slider" style="border-radius:18px;"></span>
+      </label>
+    </div>
   </div>
 
   <!-- ON/OFF Switch -->

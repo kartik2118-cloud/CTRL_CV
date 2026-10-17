@@ -142,7 +142,7 @@ function getShadowStyles() {
       width: 100%;
       height: 100%;
       pointer-events: none;
-      z-index: 2147483640;
+      z-index: 2147483647;
       overflow: hidden;
       display: block;
     }
@@ -373,7 +373,7 @@ function attachOverlay(player) {
   host.id = OVERLAY_HOST_ID;
   host.style.cssText = isBody
     ? 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483647;display:block;'
-    : 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2147483640;display:block;';
+    : 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2147483647;display:block;';
 
   const shadow = host.attachShadow({ mode: 'open' });
   const styleEl = document.createElement('style');
@@ -773,10 +773,83 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
         return false;
       }
 
+      case 'CHUNK_SENT': {
+        if (typeof window.__livesubOnChunkSent === 'function') {
+          window.__livesubOnChunkSent(message);
+        }
+        sendResponse({ status: 'ok' });
+        return true;
+      }
+
+      case 'RESULT': {
+        if (typeof window.__livesubOnResult === 'function') {
+          window.__livesubOnResult(message);
+        }
+        sendResponse({ status: 'ok' });
+        return true;
+      }
+
+      case 'STATUS': {
+        if (typeof window.__livesubUpdateHud === 'function') {
+          const update = {};
+          if (message.status === 'Streaming') {
+            update.capture_state = 'capturing';
+            update.ws_state = 'connected';
+          } else if (message.status === 'Connecting') {
+            update.capture_state = 'starting';
+            update.ws_state = 'connecting';
+          } else if (message.status === 'Idle') {
+            update.capture_state = 'idle';
+            update.ws_state = 'disconnected';
+          } else if (message.status === 'Error') {
+            update.capture_state = 'error';
+            update.ws_state = 'error';
+          }
+          if (message.capture_state) update.capture_state = message.capture_state;
+          if (message.ws_state) update.ws_state = message.ws_state;
+          if (message.last_error || message.message) update.last_error = message.last_error || message.message;
+          window.__livesubUpdateHud(update);
+        }
+        sendResponse({ status: 'ok' });
+        return true;
+      }
+
+      case 'UPDATE_HUD_ERROR': {
+        if (typeof window.__livesubUpdateHud === 'function') {
+          window.__livesubUpdateHud({ last_error: message.error || 'none' });
+        }
+        sendResponse({ status: 'ok' });
+        return true;
+      }
+
+      case 'TOGGLE_DEBUG_HUD': {
+        if (typeof window.__livesubToggleHud === 'function') {
+          window.__livesubToggleHud(message.visible !== false);
+        }
+        sendResponse({ status: 'ok' });
+        return true;
+      }
+
+      case 'GET_HUD_TELEMETRY': {
+        const isOverlayPresent = !!(overlayHostEl && overlayHostEl.isConnected && overlayHostEl.shadowRoot);
+        debugHudState.overlay_present = isOverlayPresent;
+        const ageS = debugHudState.last_result_time
+          ? ((Date.now() - debugHudState.last_result_time) / 1000).toFixed(1)
+          : 'n/a';
+        sendResponse({
+          success: true,
+          telemetry: {
+            ...debugHudState,
+            last_result_age_s: ageS
+          }
+        });
+        return true;
+      }
+
       case 'GET_STATUS': {
         sendResponse({
-          version: '0.1.1',
-          build: 11,
+          version: '0.1.2',
+          build: 12,
           currentVideoId,
           isAttached: !!overlayHostEl && overlayHostEl.isConnected,
           currentStyle: { ...currentStyle }
@@ -834,9 +907,125 @@ function observePlayerReplacement() {
   bodyObserver.observe(document.body, { childList: true, subtree: true });
 }
 
+// ─── Debug HUD (Telemetry Badge - K2, K5) ────────────────────────────────────
+const DEBUG_HUD_ID = 'livesub-debug-hud';
+const debugHudState = {
+  ext_loaded: true,
+  capture_state: 'idle',
+  ws_state: 'disconnected',
+  chunks_sent: 0,
+  results_received: 0,
+  last_result_time: null,
+  epoch: 1,
+  last_error: 'none',
+  overlay_present: false,
+  visible: true
+};
+
+function renderDebugHud() {
+  let hudEl = document.getElementById(DEBUG_HUD_ID);
+  if (!hudEl) {
+    hudEl = document.createElement('div');
+    hudEl.id = DEBUG_HUD_ID;
+    hudEl.style.cssText = 'position:fixed;top:12px;left:12px;z-index:2147483647;pointer-events:none;' +
+      'background:rgba(15,23,42,0.92);backdrop-filter:blur(4px);color:#f1f5f9;' +
+      'font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;' +
+      'line-height:1.4;padding:8px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.18);' +
+      'box-shadow:0 4px 14px rgba(0,0,0,0.55);max-width:380px;display:block;';
+    const fsEl = document.fullscreenElement;
+    if (fsEl) {
+      fsEl.appendChild(hudEl);
+    } else {
+      document.body.appendChild(hudEl);
+    }
+  }
+
+  const isOverlayPresent = !!(overlayHostEl && overlayHostEl.isConnected && overlayHostEl.shadowRoot);
+  debugHudState.overlay_present = isOverlayPresent;
+
+  const ageS = debugHudState.last_result_time
+    ? ((Date.now() - debugHudState.last_result_time) / 1000).toFixed(1) + 's'
+    : 'n/a';
+
+  hudEl.style.display = debugHudState.visible ? 'block' : 'none';
+
+  hudEl.innerHTML = `
+    <div style="font-weight:700;color:#ef4444;margin-bottom:3px;letter-spacing:0.5px;">[LiveSub Debug HUD]</div>
+    <div>ext_loaded: <span style="color:#22c55e;">${debugHudState.ext_loaded}</span></div>
+    <div>capture_state: <span style="color:#38bdf8;">${debugHudState.capture_state}</span></div>
+    <div>ws_state: <span style="color:#a78bfa;">${debugHudState.ws_state}</span></div>
+    <div>chunks_sent: <span style="color:#facc15;">${debugHudState.chunks_sent}</span></div>
+    <div>results_received: <span style="color:#4ade80;">${debugHudState.results_received}</span></div>
+    <div>last_result_age_s: <span>${ageS}</span></div>
+    <div>epoch: <span>${debugHudState.epoch}</span></div>
+    <div>overlay_present: <span style="color:${isOverlayPresent ? '#22c55e' : '#f87171'};font-weight:600;">${isOverlayPresent}</span></div>
+    <div>last_error: <span style="color:${debugHudState.last_error !== 'none' ? '#f87171' : '#94a3b8'};">${debugHudState.last_error}</span></div>
+  `.trim();
+}
+
+window.__livesubOnChunkSent = function(msg) {
+  debugHudState.chunks_sent++;
+  if (typeof msg.epoch === 'number') debugHudState.epoch = msg.epoch;
+  renderDebugHud();
+};
+
+window.__livesubOnResult = function(msg) {
+  debugHudState.results_received++;
+  debugHudState.last_result_time = Date.now();
+  const resEpoch = msg.result?.epoch ?? msg.epoch;
+  if (typeof resEpoch === 'number') debugHudState.epoch = resEpoch;
+  renderDebugHud();
+};
+
+window.__livesubUpdateHud = function(partial) {
+  Object.assign(debugHudState, partial);
+  renderDebugHud();
+};
+
+window.__livesubToggleHud = function(visible) {
+  debugHudState.visible = Boolean(visible);
+  renderDebugHud();
+};
+
+// 500ms ticker for Debug HUD
+setInterval(renderDebugHud, 500);
+
+// Load persisted HUD visibility preference (default: true)
+if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+  chrome.storage.local.get(['livesub_debug_hud'], (items) => {
+    if (items && items.livesub_debug_hud !== undefined) {
+      debugHudState.visible = items.livesub_debug_hud !== false;
+      renderDebugHud();
+    }
+  });
+}
+
+// Fullscreen listener keeping HUD and overlay mounted inside fullscreen element
+document.addEventListener('fullscreenchange', () => {
+  const fsEl = document.fullscreenElement;
+  const hudEl = document.getElementById(DEBUG_HUD_ID);
+  if (fsEl) {
+    if (hudEl && !fsEl.contains(hudEl)) {
+      fsEl.appendChild(hudEl);
+    }
+    if (overlayHostEl && !fsEl.contains(overlayHostEl)) {
+      fsEl.appendChild(overlayHostEl);
+    }
+  } else {
+    if (hudEl && hudEl.parentElement !== document.body) {
+      document.body.appendChild(hudEl);
+    }
+    const player = getPlayerElement(true);
+    if (player && overlayHostEl && !player.contains(overlayHostEl)) {
+      player.appendChild(overlayHostEl);
+    }
+  }
+});
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 if (!initAll()) {
   pollForPlayer();
 }
 observePlayerReplacement();
 initSpaNavigationListeners();
+renderDebugHud();

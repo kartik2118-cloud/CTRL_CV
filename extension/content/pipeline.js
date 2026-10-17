@@ -207,12 +207,15 @@
     subtree: true
   });
 
-  // 4. Message Listeners for CHUNK_SENT and RESULT
+  // 4. Message Listeners for CHUNK_SENT, RESULT, and STATUS
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message) return false;
     const action = message.type || message.action;
 
     if (action === 'CHUNK_SENT') {
+      if (typeof window.__livesubOnChunkSent === 'function') {
+        window.__livesubOnChunkSent(message);
+      }
       if (bridge) {
         bridge.registerChunk(message.chunk_id, {
           video_start_time: message.video_start_time,
@@ -226,6 +229,9 @@
     }
 
     if (action === 'RESULT') {
+      if (typeof window.__livesubOnResult === 'function') {
+        window.__livesubOnResult(message);
+      }
       const resultFrame = message.result || message;
       if (bridge) {
         let overrideCtx = null;
@@ -247,6 +253,30 @@
         sendResponse({ status: 'dropped', reason: 'bridge_not_ready' });
       }
       return true;
+    }
+
+    if (action === 'STATUS') {
+      if (typeof window.__livesubUpdateHud === 'function') {
+        const update = {};
+        if (message.status === 'Streaming') {
+          update.capture_state = 'capturing';
+          update.ws_state = 'connected';
+        } else if (message.status === 'Connecting') {
+          update.capture_state = 'starting';
+          update.ws_state = 'connecting';
+        } else if (message.status === 'Idle') {
+          update.capture_state = 'idle';
+          update.ws_state = 'disconnected';
+        } else if (message.status === 'Error') {
+          update.capture_state = 'error';
+          update.ws_state = 'error';
+        }
+        if (message.capture_state) update.capture_state = message.capture_state;
+        if (message.ws_state) update.ws_state = message.ws_state;
+        if (message.last_error || message.message) update.last_error = message.last_error || message.message;
+        window.__livesubUpdateHud(update);
+      }
+      return false;
     }
 
     // 7. Judge Export Message Handler

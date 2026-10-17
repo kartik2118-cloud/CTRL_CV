@@ -209,7 +209,9 @@ async function startCapture(streamId, targetTabId = null) {
     // Initialize WsClient for backend streaming
     const WsClientClass = globalThis.WsClient || (typeof window !== 'undefined' && window.WsClient) || (typeof self !== 'undefined' && self.WsClient);
     if (WsClientClass) {
-      chrome.runtime.sendMessage({ type: 'STATUS', status: 'Connecting' }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'STATUS', status: 'Connecting', ws_state: 'connecting' }, () => {
+        if (chrome.runtime.lastError) {}
+      });
       wsClient = new WsClientClass({
         initialEpoch: currentEpoch,
         initialPlaybackRate: latestAnchor ? latestAnchor.playback_rate : 1.0,
@@ -219,23 +221,60 @@ async function startCapture(streamId, targetTabId = null) {
             targetTabId: currentTargetTabId,
             chunk_id: chunkInfo.chunk_id,
             video_start_time: chunkInfo.video_start_time,
-            playback_rate: chunkInfo.playback_rate
-          }).catch(() => {});
-          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Streaming' }).catch(() => {});
+            playback_rate: chunkInfo.playback_rate,
+            epoch: chunkInfo.epoch
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+          chrome.runtime.sendMessage({
+            type: 'STATUS',
+            status: 'Streaming',
+            capture_state: 'capturing',
+            ws_state: 'connected'
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
         },
         onResult: (result) => {
           chrome.runtime.sendMessage({
             type: 'RESULT',
             targetTabId: currentTargetTabId,
             result: result
-          }).catch(() => {});
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
         },
         onOpen: () => {
-          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Streaming' }).catch(() => {});
+          chrome.runtime.sendMessage({
+            type: 'STATUS',
+            status: 'Streaming',
+            capture_state: 'capturing',
+            ws_state: 'connected'
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
         },
         onError: (err) => {
           console.warn('[Offscreen WS] Error:', err);
-          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Error', message: err?.message || String(err) }).catch(() => {});
+          const errMsg = err?.message || String(err);
+          chrome.runtime.sendMessage({
+            type: 'STATUS',
+            status: 'Error',
+            message: errMsg,
+            last_error: errMsg,
+            ws_state: 'error'
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+        },
+        onClose: () => {
+          chrome.runtime.sendMessage({
+            type: 'STATUS',
+            status: 'Idle',
+            ws_state: 'disconnected'
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
         }
       });
 
@@ -248,7 +287,16 @@ async function startCapture(streamId, targetTabId = null) {
 
       wsClient.connect().catch((err) => {
         console.warn('[Offscreen WS] Connect error (will retry or offline):', err);
-        chrome.runtime.sendMessage({ type: 'STATUS', status: 'Error', message: err?.message || String(err) }).catch(() => {});
+        const errMsg = err?.message || String(err);
+        chrome.runtime.sendMessage({
+          type: 'STATUS',
+          status: 'Error',
+          message: errMsg,
+          last_error: errMsg,
+          ws_state: 'error'
+        }, () => {
+          if (chrome.runtime.lastError) {}
+        });
       });
     }
 

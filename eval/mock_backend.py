@@ -74,13 +74,20 @@ async def handle_contract_connection(websocket: WebSocket):
             print(f"[Backend] Injected HTTP 429 error for chunk {chunk_id}")
             return
 
+        end_offset = CONFIG.get("end_offset", 1.0)
+        start_offset = CONFIG.get("start_offset", 0.0)
+        v_sub_start = round(v_start + (start_offset * rate), 3)
+        v_sub_end = round(v_start + (end_offset * rate), 3)
+
         result_frame = {
             "type": "result",
             "chunk_id": chunk_id,
             "epoch": epoch,
             "is_final": True,
-            "start_offset": CONFIG["start_offset"],
-            "end_offset": CONFIG["end_offset"],
+            "start": v_sub_start,
+            "end": v_sub_end,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
             "lang": lang,
             "langs": [lang],
             "text": CONFIG["text"],
@@ -88,7 +95,7 @@ async def handle_contract_connection(websocket: WebSocket):
         }
         async with send_lock:
             await websocket.send_json(result_frame)
-        print(f"[Backend] Sent result for chunk {chunk_id} (epoch={epoch}, delay={chunk_delay}s)")
+        print(f"[Backend] Sent result for chunk {chunk_id} (epoch={epoch}, start={v_sub_start}s, end={v_sub_end}s, delay={chunk_delay}s)")
 
     try:
         while True:
@@ -102,17 +109,27 @@ async def handle_contract_connection(websocket: WebSocket):
                     continue
 
                 msg_type = data.get("type")
-                if msg_type == "start":
-                    session_id = data.get("session_id", "default_session")
-                    lang_hint = data.get("lang_hint") or "hi"
-                    print(f"[Backend] Session started: {session_id}, lang_hint={lang_hint}")
+                if msg_type in ("hello", "start"):
+                    session_id = data.get("client_id") or data.get("session_id", "default_session")
+                    lang_hint = data.get("lang") or data.get("lang_hint") or "hi"
+                    print(f"[Backend] Client handshake ({msg_type}): session_id={session_id}, lang={lang_hint}")
                     async with send_lock:
-                        await websocket.send_json({"type": "ready"})
+                        if msg_type == "hello":
+                            await websocket.send_json({"type": "hello_ack", "session_id": session_id})
+                        else:
+                            await websocket.send_json({"type": "ready"})
 
-                elif msg_type == "chunk":
+                elif msg_type == "seek":
+                    epoch = data.get("epoch", 1)
+                    v_time = data.get("video_time", 0.0)
+                    print(f"[Backend] Seek event: epoch={epoch}, video_time={v_time}")
+                    async with send_lock:
+                        await websocket.send_json({"type": "seek_ack", "epoch": epoch})
+
+                elif msg_type in ("chunk_meta", "chunk"):
                     chunk_id = data.get("chunk_id", 0)
                     epoch = data.get("epoch", 0)
-                    v_start = data.get("video_start_time", 0.0)
+                    v_start = data.get("video_start_time") if "video_start_time" in data else data.get("video_start", 0.0)
                     rate = data.get("playback_rate", 1.0)
 
                     # Contract requirement: Next frame MUST be binary PCM

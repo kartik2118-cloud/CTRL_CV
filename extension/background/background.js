@@ -28,9 +28,17 @@ let captureSession = null; // { targetTabId: number, state: 'idle' | 'starting' 
 let creatingOffscreenPromise = null;
 let currentAppStatus = { status: 'Idle', message: '' };
 
-function broadcastStatus(status, message = '') {
-  currentAppStatus = { status, message };
-  chrome.runtime.sendMessage({ type: 'STATUS', status, message }).catch(() => {});
+function broadcastStatus(status, message = '', extra = {}) {
+  currentAppStatus = { status, message, ...extra };
+  chrome.runtime.sendMessage({ type: 'STATUS', status, message, ...extra }, () => {
+    if (chrome.runtime.lastError) {}
+  });
+  const tabId = captureSession?.targetTabId;
+  if (tabId) {
+    chrome.tabs.sendMessage(tabId, { type: 'STATUS', status, message, ...extra }, () => {
+      if (chrome.runtime.lastError) {}
+    });
+  }
 }
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen/offscreen.html';
@@ -87,7 +95,7 @@ async function sendMessageToOffscreenWithRetry(message, maxAttempts = 25, interv
   throw new Error('No response received from offscreen document');
 }
 
-const CURRENT_CONTENT_BUILD = 11;
+const CURRENT_CONTENT_BUILD = 12;
 
 async function ensureContentScript(tabId) {
   try {
@@ -166,7 +174,7 @@ async function handleStartCapture(targetTabId) {
     }
 
     captureSession.state = 'capturing';
-    broadcastStatus('Streaming', 'Active');
+    broadcastStatus('Streaming', 'Active', { capture_state: 'capturing', ws_state: 'connected' });
     console.log(`[LiveSub BG] Successfully started tabCapture for tab ${targetTabId}`);
     return {
       success: true,
@@ -176,11 +184,12 @@ async function handleStartCapture(targetTabId) {
   } catch (err) {
     console.error('[LiveSub BG] Failed to start capture:', err);
     captureSession = null;
-    broadcastStatus('Error', err.message || String(err));
+    const errMsg = err.message || String(err);
+    broadcastStatus('Error', errMsg, { last_error: errMsg, capture_state: 'error', ws_state: 'error' });
     await closeOffscreenDocumentSafely();
     return {
       success: false,
-      error: err.message || String(err)
+      error: errMsg
     };
   }
 }
@@ -232,8 +241,16 @@ registerHandler('STOP_CAPTURE', (msg, sender, sendResponse) => {
 });
 
 registerHandler('STATUS', (msg) => {
-  currentAppStatus = { status: msg.status || 'Idle', message: msg.message || '' };
-  chrome.runtime.sendMessage({ type: 'STATUS', ...currentAppStatus }).catch(() => {});
+  currentAppStatus = { status: msg.status || 'Idle', message: msg.message || '', ...msg };
+  const tabId = captureSession?.targetTabId;
+  if (tabId) {
+    chrome.tabs.sendMessage(tabId, { type: 'STATUS', ...currentAppStatus }, () => {
+      if (chrome.runtime.lastError) {}
+    });
+  }
+  chrome.runtime.sendMessage({ type: 'STATUS', ...currentAppStatus }, () => {
+    if (chrome.runtime.lastError) {}
+  });
 });
 
 registerHandler('GET_STATUS', (msg, sender, sendResponse) => {
@@ -241,7 +258,8 @@ registerHandler('GET_STATUS', (msg, sender, sendResponse) => {
     status: currentAppStatus.status,
     message: currentAppStatus.message,
     isCapturing: !!captureSession,
-    captureSession
+    captureSession,
+    last_error: currentAppStatus.last_error || 'none'
   });
   return true;
 });
@@ -257,14 +275,18 @@ registerHandler('EXPORT_DIAGNOSTICS', (msg, sender, sendResponse) => {
 registerHandler('CHUNK_SENT', (msg) => {
   const tabId = msg.targetTabId || (captureSession && captureSession.targetTabId);
   if (tabId) {
-    chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+    chrome.tabs.sendMessage(tabId, msg, () => {
+      if (chrome.runtime.lastError) {}
+    });
   }
 });
 
 registerHandler('RESULT', (msg) => {
   const tabId = msg.targetTabId || (captureSession && captureSession.targetTabId);
   if (tabId) {
-    chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+    chrome.tabs.sendMessage(tabId, msg, () => {
+      if (chrome.runtime.lastError) {}
+    });
   }
 });
 
