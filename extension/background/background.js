@@ -87,7 +87,7 @@ async function sendMessageToOffscreenWithRetry(message, maxAttempts = 25, interv
   throw new Error('No response received from offscreen document');
 }
 
-const CURRENT_CONTENT_BUILD = 10;
+const CURRENT_CONTENT_BUILD = 11;
 
 async function ensureContentScript(tabId) {
   try {

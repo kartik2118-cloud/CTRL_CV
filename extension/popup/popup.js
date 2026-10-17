@@ -237,7 +237,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       ]
     };
 
-    const key = (lang || 'hindi').toLowerCase();
+    const LANG_ALIASES = {
+      hi: 'hindi',
+      hin: 'hindi',
+      hindi: 'hindi',
+      mr: 'marathi',
+      mar: 'marathi',
+      marathi: 'marathi',
+      en: 'english',
+      eng: 'english',
+      english: 'english',
+      auto: 'hindi'
+    };
+
+    const key = LANG_ALIASES[(lang || 'hindi').toLowerCase()] || 'hindi';
     const seq = DEMO_SEQUENCES[key] || DEMO_SEQUENCES['hindi'];
 
     card.style.display = 'block';
@@ -271,8 +284,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   document.getElementById('btn-demo')?.addEventListener('click', async () => {
-    const srcLang = sourceLangSelect?.value || 'hindi';
-    const langKey = srcLang === 'auto' ? 'hindi' : srcLang;
+    const srcLang = sourceLangSelect?.value || 'hi';
+    const LANG_ALIASES = {
+      hi: 'hindi',
+      hin: 'hindi',
+      hindi: 'hindi',
+      mr: 'marathi',
+      mar: 'marathi',
+      marathi: 'marathi',
+      en: 'english',
+      eng: 'english',
+      english: 'english',
+      auto: 'hindi'
+    };
+    const langKey = LANG_ALIASES[srcLang.toLowerCase()] || 'hindi';
 
     // 1. Immediately run animated preview directly inside popup
     runPopupDemo(langKey);

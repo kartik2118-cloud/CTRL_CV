@@ -49,6 +49,24 @@ const DEMO_SEQUENCES = {
   ]
 };
 
+const LANG_ALIASES = {
+  hi: 'hindi',
+  hin: 'hindi',
+  hindi: 'hindi',
+  mr: 'marathi',
+  mar: 'marathi',
+  marathi: 'marathi',
+  en: 'english',
+  eng: 'english',
+  english: 'english',
+  auto: 'hindi'
+};
+
+function resolveLanguageKey(lang) {
+  const norm = (lang || '').toLowerCase().trim();
+  return LANG_ALIASES[norm] || 'hindi';
+}
+
 const LANGUAGES = {
   hindi: DEMO_SEQUENCES.hindi[2],
   marathi: DEMO_SEQUENCES.marathi[2],
@@ -61,8 +79,8 @@ let isDemoRunning = false;
 window.__livesubIsDemoRunning = false;
 
 function getDemoCue(lang) {
-  const lower = (lang || '').toLowerCase();
-  return LANGUAGES[lower] || LANGUAGES['hindi'];
+  const key = resolveLanguageKey(lang);
+  return LANGUAGES[key] || LANGUAGES['hindi'];
 }
 
 const DEMO_CUE = LANGUAGES['hindi'];
@@ -151,7 +169,7 @@ function getShadowStyles() {
 
     #livesub-box.pos-bottom {
       top: auto;
-      bottom: 12%;
+      bottom: 15%;
     }
 
     .sub-row {
@@ -243,9 +261,10 @@ function stopDemoSequence() {
 
 function runDemoSequence(lang = selectedLanguage) {
   stopDemoSequence();
-  initAll();
+  initAll(true);
 
-  const key = (lang || 'hindi').toLowerCase();
+  const key = resolveLanguageKey(lang);
+  selectedLanguage = key;
   const sequence = DEMO_SEQUENCES[key] || DEMO_SEQUENCES['hindi'];
 
   isDemoRunning = true;
@@ -259,7 +278,7 @@ function runDemoSequence(lang = selectedLanguage) {
       demoTimer = setTimeout(() => {
         clearSubtitle();
         stopDemoSequence();
-      }, 2500);
+      }, 3500);
       return;
     }
 
@@ -405,8 +424,8 @@ function attachControls(player) {
   panel.id = CONTROLS_PANEL_ID;
   panel.style.cssText = [
     'position:absolute',
-    'top:12px',
-    'right:12px',
+    'top:54px',
+    'right:14px',
     'z-index:2147483645',
     'pointer-events:auto',
     'font-family:Arial, sans-serif',
@@ -757,7 +776,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       case 'GET_STATUS': {
         sendResponse({
           version: '0.1.1',
-          build: 10,
+          build: 11,
           currentVideoId,
           isAttached: !!overlayHostEl && overlayHostEl.isConnected,
           currentStyle: { ...currentStyle }
