@@ -8,6 +8,16 @@ let activeTab = null;
 let isCapturing = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Guard: Detect if opened as file:/// instead of extension popup
+  if (typeof chrome === 'undefined' || !chrome.runtime?.id || !chrome.tabs) {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:#ef4444;color:#ffffff;padding:12px;font-weight:600;font-size:12px;border-radius:8px;margin-bottom:14px;text-align:center;line-height:1.4;box-shadow:0 4px 12px rgba(239,68,68,0.4);';
+    banner.innerHTML = '⚠️ <strong>Local File Notice:</strong><br>You opened popup.html as a local file (file:///). Extension APIs are disabled here.<br><br>👉 <strong>To use LiveSub:</strong><br>1. Open a YouTube video tab.<br>2. Click the puzzle icon (🧩) in the top-right toolbar.<br>3. Click <strong>LiveSub</strong> (or pin it 📌).';
+    document.body.prepend(banner);
+    setupEventListeners();
+    return;
+  }
+
   activeTab = await getActiveTab();
 
   if (activeTab && activeTab.id && activeTab.url && activeTab.url.includes('youtube.com')) {
@@ -34,7 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Query background status
-  chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (status) => {
+  chrome.runtime.sendMessage({ type: 'GET_STATUS', action: 'GET_STATUS' }, (status) => {
     if (status && status.isCapturing) {
       isCapturing = true;
       setCaptureButtonState(true);
@@ -141,13 +151,23 @@ function saveSettings() {
 }
 
 async function handleToggleCapture() {
-  activeTab = await getActiveTab();
+  const toggleBtn = document.getElementById('btn-toggle-capture');
+
+  if (typeof chrome === 'undefined' || !chrome.runtime?.id || !chrome.tabs) {
+    alert('⚠️ LiveSub must be opened by clicking the LiveSub icon in Chrome\'s top-right toolbar on a YouTube tab, not as a local file:/// page.');
+    return;
+  }
+
+  // Pre-query or use existing activeTab
+  if (!activeTab || !activeTab.id) {
+    activeTab = await getActiveTab();
+  }
+
   if (!activeTab || !activeTab.id) {
     alert('Please switch to an active YouTube video tab and click the extension icon again.');
     return;
   }
 
-  const toggleBtn = document.getElementById('btn-toggle-capture');
   saveSettings();
 
   const sourceLang = document.getElementById('select-source-lang')?.value || 'hi';
@@ -158,14 +178,18 @@ async function handleToggleCapture() {
     toggleBtn.disabled = true;
     toggleBtn.innerHTML = '<span>⏳</span> Connecting...';
 
+    // Initiate stream ID acquisition immediately under user gesture context
+    const streamPromise = getMediaStreamIdFromPopup(activeTab.id);
+
     await ensureContentScriptInjected(activeTab.id);
 
-    // Acquire streamId under user gesture context in popup
-    const popupStreamId = await getMediaStreamIdFromPopup(activeTab.id);
+    const popupStreamId = await streamPromise;
 
     chrome.runtime.sendMessage({
       type: 'START_CAPTURE',
+      action: 'START_CAPTURE',
       tabId: activeTab.id,
+      targetTabId: activeTab.id,
       streamId: popupStreamId,
       config: { sourceLanguage: sourceLang, targetLanguage: targetLang, wsUrl }
     }, (res) => {
@@ -182,7 +206,7 @@ async function handleToggleCapture() {
       }
     });
   } else {
-    chrome.runtime.sendMessage({ type: 'STOP_CAPTURE' }, () => {
+    chrome.runtime.sendMessage({ type: 'STOP_CAPTURE', action: 'STOP_CAPTURE' }, () => {
       isCapturing = false;
       setCaptureButtonState(false);
       updateStatusBadge('Standby', 'inactive');
