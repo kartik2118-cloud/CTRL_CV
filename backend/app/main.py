@@ -39,7 +39,7 @@ from app.models import (
     ErrorMessage,
 )
 from app.session import SessionState
-from app.audio_utils import is_silence_chunk, deduplicate_seam, is_hallucination_text
+from app.audio_utils import is_silence_chunk, deduplicate_seam, is_hallucination_text, strip_music_tags
 from app.providers.factory import get_stt_provider, get_translation_provider
 
 logging.basicConfig(
@@ -161,7 +161,7 @@ async def call_stt_with_resilience(audio_bytes: bytes, lang: str):
             )
         except Exception as e:
             last_err = e
-            logger.warning("STT attempt %d failed: %s", attempt + 1, e)
+            logger.warning("STT attempt %d failed: %r", attempt + 1, e)
             if attempt < PROVIDER_MAX_RETRIES:
                 await asyncio.sleep(PROVIDER_RETRY_BACKOFF * (2 ** attempt))
 
@@ -174,7 +174,7 @@ async def call_stt_with_resilience(audio_bytes: bytes, lang: str):
                 timeout=PROVIDER_TIMEOUT_SECONDS
             )
         except Exception as fb_err:
-            logger.error("Fallback STT provider error: %s", fb_err)
+            logger.error("Fallback STT provider error: %r", fb_err)
 
     raise last_err
 
@@ -189,7 +189,7 @@ async def call_translation_with_resilience(text: str, source_lang: str, target_l
             )
         except Exception as e:
             last_err = e
-            logger.warning("Translation attempt %d failed: %s", attempt + 1, e)
+            logger.warning("Translation attempt %d failed: %r", attempt + 1, e)
             if attempt < PROVIDER_MAX_RETRIES:
                 await asyncio.sleep(PROVIDER_RETRY_BACKOFF * (2 ** attempt))
 
@@ -201,7 +201,7 @@ async def call_translation_with_resilience(text: str, source_lang: str, target_l
                 timeout=PROVIDER_TIMEOUT_SECONDS
             )
         except Exception as fb_err:
-            logger.error("Fallback translation provider error: %s", fb_err)
+            logger.error("Fallback translation provider error: %r", fb_err)
 
     raise last_err
 
@@ -309,7 +309,7 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
             for seg in results:
                 if not hasattr(seg, "text") or seg.text is None:
                     continue
-                seg_text = str(seg.text).strip()
+                seg_text = strip_music_tags(str(seg.text)).strip()
                 if not seg_text:
                     continue
 

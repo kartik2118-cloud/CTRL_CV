@@ -32,14 +32,14 @@ IDLE_TIMEOUT_SECONDS = float(os.getenv("IDLE_TIMEOUT_SECONDS", "120.0"))
 MAX_CHUNKS_PER_SECOND = float(os.getenv("MAX_CHUNKS_PER_SECOND", "5.0"))
 
 # Provider error handling & resilience
-PROVIDER_TIMEOUT_SECONDS = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "8.0"))
+PROVIDER_TIMEOUT_SECONDS = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "15.0"))
 PROVIDER_MAX_RETRIES = int(os.getenv("PROVIDER_MAX_RETRIES", "2"))
 PROVIDER_RETRY_BACKOFF = float(os.getenv("PROVIDER_RETRY_BACKOFF", "0.5"))
-FALLBACK_STT_PROVIDER = os.getenv("FALLBACK_STT_PROVIDER", "").strip().lower()
-FALLBACK_TRANSLATION_PROVIDER = os.getenv("FALLBACK_TRANSLATION_PROVIDER", "").strip().lower()
+FALLBACK_STT_PROVIDER = os.getenv("FALLBACK_STT_PROVIDER", "openai" if OPENAI_API_KEY else "").strip().lower()
+FALLBACK_TRANSLATION_PROVIDER = os.getenv("FALLBACK_TRANSLATION_PROVIDER", "openai" if OPENAI_API_KEY else "").strip().lower()
 
 # Audio filtering & quality
-VAD_ENERGY_THRESHOLD = float(os.getenv("VAD_ENERGY_THRESHOLD", "0.005"))
+VAD_ENERGY_THRESHOLD = float(os.getenv("VAD_ENERGY_THRESHOLD", "0.002"))
 WHISPER_NO_SPEECH_THRESHOLD = float(os.getenv("WHISPER_NO_SPEECH_THRESHOLD", "0.6"))
 WHISPER_MIN_AVG_LOGPROB = float(os.getenv("WHISPER_MIN_AVG_LOGPROB", "-1.2"))
 FILTER_HALLUCINATIONS = os.getenv("FILTER_HALLUCINATIONS", "true").lower() in ("true", "1", "yes")

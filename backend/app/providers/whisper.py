@@ -9,7 +9,7 @@ from app.config import (
     FILTER_HALLUCINATIONS,
     PROVIDER_TIMEOUT_SECONDS,
 )
-from app.audio_utils import is_hallucination_text, ensure_wav_bytes
+from app.audio_utils import is_hallucination_text, ensure_wav_bytes, strip_music_tags
 
 
 class WhisperSTTProvider(STTProvider):
@@ -61,7 +61,8 @@ class WhisperSTTProvider(STTProvider):
         data = {
             "model": self.model,
             "response_format": "verbose_json",
-            "temperature": "0.0"
+            "temperature": "0.0",
+            "prompt": "Conversational dialogue and speech subtitles, transcribing spoken words accurately without music tags."
         }
         if lang and lang.lower() not in ("auto", "none", ""):
             data["language"] = lang.lower()
@@ -77,7 +78,8 @@ class WhisperSTTProvider(STTProvider):
         if segments:
             results = []
             for seg in segments:
-                text = seg.get("text", "").strip()
+                raw_text = seg.get("text", "").strip()
+                text = strip_music_tags(raw_text).strip()
                 if not text:
                     continue
 
@@ -111,7 +113,8 @@ class WhisperSTTProvider(STTProvider):
                 return results
 
         # Fallback if verbose segments are absent
-        text = res_json.get("text", "").strip()
+        raw_text = res_json.get("text", "").strip()
+        text = strip_music_tags(raw_text).strip()
         if not text or (FILTER_HALLUCINATIONS and is_hallucination_text(text)):
             return []
 

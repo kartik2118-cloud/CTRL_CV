@@ -74,8 +74,9 @@ class LLMTranslationProvider(TranslationProvider):
 
         prompt = (
             f"You are a live video subtitle translator. Translate the following speech text to {t_name}.\n"
-            f"Maintain the conversational tone, brevity, and emotion suited for video subtitles.\n"
-            f"Output ONLY the translated subtitle text, with no explanations, notes, or quotes.\n\n"
+            f"If the text is already in {t_name}, return it cleaned up and formatted for subtitles.\n"
+            f"Maintain conversational tone, natural dialogue flow, and brevity suited for video subtitles.\n"
+            f"Output ONLY the final translated subtitle text, with no explanations, notes, or quotes.\n\n"
             f"Text: {clean_text}"
         )
 
@@ -88,7 +89,7 @@ class LLMTranslationProvider(TranslationProvider):
             "max_tokens": 128
         }
 
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(self.endpoint, headers=headers, json=payload)
             if response.status_code != 200:
                 raise RuntimeError(

@@ -17,7 +17,23 @@ HALLUCINATION_PATTERNS = [
     re.compile(r"translated\s+by", re.I),
     re.compile(r"you\s*$", re.I),
     re.compile(r"^[\.\,\!\?\s\-\–\—]+$"),
+    re.compile(r"^\[\s*(?:music|singing|applause|laughter|cheering|संगीत|तालियां|तालियाँ)\s*\]$", re.I),
+    re.compile(r"^\(\s*(?:music|singing|applause|laughter)\s*\)$", re.I),
+    re.compile(r"^[♪♫♩♬\s]+$"),
 ]
+
+
+def strip_music_tags(text: str) -> str:
+    """
+    Strips inline music/applause tags like [Music], [संगीत], ♪ from transcribed text
+    so that background scores don't contaminate conversational dialogue.
+    """
+    if not text:
+        return ""
+    clean = re.sub(r"\[\s*(?:music|singing|applause|laughter|cheering|संगीत|तालियां|तालियाँ)\s*\]", "", text, flags=re.I)
+    clean = re.sub(r"\(\s*(?:music|singing|applause|laughter)\s*\)", "", clean, flags=re.I)
+    clean = re.sub(r"[♪♫♩♬]+", "", clean)
+    return clean.strip()
 
 
 def ensure_wav_bytes(audio_bytes: bytes, sample_rate: int = 16000, channels: int = 1, sampwidth: int = 2) -> bytes:
@@ -84,9 +100,9 @@ def is_silence_chunk(audio_bytes: bytes, threshold: float = 0.005) -> bool:
 
 def is_hallucination_text(text: str) -> bool:
     """
-    Checks if transcribed text matches known Whisper silence hallucinations.
+    Checks if transcribed text matches known Whisper silence hallucinations or pure music/applause tags.
     """
-    clean = text.strip()
+    clean = strip_music_tags(text).strip()
     if not clean:
         return True
     for pat in HALLUCINATION_PATTERNS:
