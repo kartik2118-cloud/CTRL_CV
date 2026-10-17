@@ -34,7 +34,47 @@
   }
 
   /**
+   * Normalizes raw caption track objects into standard shape.
+   * @param {Array<Object>} rawTracks
+   * @param {boolean} [includeAsr=true]
+   * @returns {Array<Object>}
+   */
+  function normalizeCaptionTracks(rawTracks, includeAsr = true) {
+    if (!Array.isArray(rawTracks)) return [];
+    const tracks = [];
+    for (const t of rawTracks) {
+      if (!t || typeof t !== 'object') continue;
+      const rawKind = (t.kind || '').toLowerCase();
+      const vssId = (t.vssId || '').toLowerCase();
+      const isAsr = rawKind === 'asr' || vssId.startsWith('a.');
+
+      if (isAsr && !includeAsr) {
+        continue;
+      }
+
+      const languageCode = (t.languageCode || t.vssId?.replace(/^\.?a?\./, '') || 'en').toLowerCase();
+      const name = t.name?.simpleText || t.name?.runs?.[0]?.text || languageCode;
+      const kind = isAsr ? 'asr' : (t.kind || 'manual');
+      const baseUrl = t.baseUrl || '';
+
+      tracks.push({
+        languageCode,
+        name,
+        kind,
+        isAsr,
+        baseUrl
+      });
+    }
+    return tracks;
+  }
+
+  /**
    * Detects all caption tracks (both manual and auto-generated ASR) from YouTube player data.
+   * Inspects:
+   * 1. Direct playerResponse argument if passed
+   * 2. Main world DOM script tags using regex (works in isolated content script world!)
+   * 3. DOM movie_player getPlayerResponse() if accessible
+   * 4. window.ytInitialPlayerResponse if accessible
    * 
    * @param {Object} [playerResponse] YouTube player response object
    * @param {Object} [options]
@@ -62,6 +102,26 @@
           pr = watchFlexy.playerData;
         }
       }
+
+      // Check DOM script tags (works reliably in Isolated World without CSP or TrustedTypes issues)
+      if (!pr || !pr.captions) {
+        try {
+          const scripts = document.querySelectorAll('script');
+          const regex = /"captionTracks":\s*(\[\s*\{.+?\}\s*\])/;
+          for (let i = 0; i < scripts.length; i++) {
+            const text = scripts[i].textContent || '';
+            const match = text.match(regex);
+            if (match && match[1]) {
+              try {
+                const parsed = JSON.parse(match[1]);
+                if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].baseUrl) {
+                  return normalizeCaptionTracks(parsed, includeAsr);
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     if (!pr || typeof pr !== 'object') {
@@ -69,38 +129,7 @@
     }
 
     const captionTracks = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (!Array.isArray(captionTracks) || captionTracks.length === 0) {
-      return [];
-    }
-
-    const tracks = [];
-
-    for (const t of captionTracks) {
-      if (!t || typeof t !== 'object') continue;
-
-      const rawKind = (t.kind || '').toLowerCase();
-      const vssId = (t.vssId || '').toLowerCase();
-      const isAsr = rawKind === 'asr' || vssId.startsWith('a.');
-
-      if (isAsr && !includeAsr) {
-        continue;
-      }
-
-      const languageCode = (t.languageCode || t.vssId?.replace(/^\.?a?\./, '') || 'en').toLowerCase();
-      const name = t.name?.simpleText || t.name?.runs?.[0]?.text || languageCode;
-      const kind = isAsr ? 'asr' : (t.kind || 'manual');
-      const baseUrl = t.baseUrl || '';
-
-      tracks.push({
-        languageCode,
-        name,
-        kind,
-        isAsr,
-        baseUrl
-      });
-    }
-
-    return tracks;
+    return normalizeCaptionTracks(captionTracks, includeAsr);
   }
 
   /**
@@ -348,14 +377,137 @@
    * 4. Parses into cues and registers them in SyncBridge.
    * 
    * @param {Object} options
+  /**
+   * Helper to resolve current YouTube videoId from page or video element.
+   * @param {HTMLMediaElement} [video]
+   * @returns {string}
+   */
+  function getVideoId(video = null) {
+    if (typeof window !== 'undefined') {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const v = urlParams.get('v');
+        if (v) return v;
+        const shortMatch = window.location.pathname.match(/\/shorts\/([a-zA-Z0-9_-]+)/);
+        if (shortMatch && shortMatch[1]) return shortMatch[1];
+      } catch (_) {}
+      try {
+        const player = document.querySelector('#movie_player');
+        if (player && typeof player.getVideoData === 'function') {
+          const vd = player.getVideoData();
+          if (vd && vd.video_id) return vd.video_id;
+        }
+      } catch (_) {}
+    }
+    return 'default_video';
+  }
+
+  /**
+   * Generates a unique key for the video script cache in extension storage.
+   * @param {string} videoId
+   * @param {string} [targetLang='']
+   * @returns {string}
+   */
+  function getScriptCacheKey(videoId, targetLang = '') {
+    const langKey = (targetLang && targetLang !== 'none' && targetLang !== 'auto') ? targetLang.toLowerCase() : 'orig';
+    return `livesub_script_cache_${videoId}_${langKey}`;
+  }
+
+  /**
+   * Retrieves video script cues from local extension cache memory.
+   * @param {string} videoId
+   * @param {string} [targetLang='']
+   * @returns {Promise<Object|null>}
+   */
+  async function getScriptFromCache(videoId, targetLang = '') {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
+    const key = getScriptCacheKey(videoId, targetLang);
+    return new Promise(resolve => {
+      chrome.storage.local.get([key], result => {
+        if (chrome.runtime?.lastError || !result || !result[key]) {
+          resolve(null);
+        } else {
+          resolve(result[key]);
+        }
+      });
+    });
+  }
+
+  /**
+   * Stores downloaded & parsed script cues into local extension cache memory.
+   * @param {string} videoId
+   * @param {string} targetLang
+   * @param {Object} data
+   * @returns {Promise<boolean>}
+   */
+  async function saveScriptToCache(videoId, targetLang = '', data) {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return false;
+    const key = getScriptCacheKey(videoId, targetLang);
+    return new Promise(resolve => {
+      chrome.storage.local.set({ [key]: data }, () => {
+        if (chrome.runtime?.lastError) {
+          resolve(false);
+        } else {
+          chrome.storage.local.get(['livesub_script_index'], (idxRes) => {
+            const index = idxRes?.livesub_script_index || {};
+            index[key] = {
+              videoId,
+              targetLang: targetLang || 'orig',
+              cueCount: data.cues?.length || 0,
+              cachedAt: data.cachedAt || Date.now()
+            };
+            chrome.storage.local.set({ livesub_script_index: index }, () => resolve(true));
+          });
+        }
+      });
+    });
+  }
+
+  /**
+   * Clears the script cache for a specific video or all videos.
+   * @param {string} [videoId] If omitted, clears all cached video scripts
+   * @returns {Promise<void>}
+   */
+  async function clearScriptCache(videoId = null) {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+    return new Promise(resolve => {
+      chrome.storage.local.get(null, all => {
+        if (!all) return resolve();
+        const keysToRemove = [];
+        for (const k of Object.keys(all)) {
+          if (k.startsWith('livesub_script_cache_')) {
+            if (!videoId || k.includes(`_${videoId}_`)) {
+              keysToRemove.push(k);
+            }
+          }
+        }
+        if (keysToRemove.length > 0) {
+          chrome.storage.local.remove(keysToRemove, resolve);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
+   * Full caption path lifecycle coordinator with Extension Cache Memory.
+   * 1. Inspects Extension Cache Memory for pre-downloaded & translated script.
+   * 2. If present, immediately feeds cues to SyncBridge without any network calls.
+   * 3. If absent, detects YouTube caption tracks (manual prioritized, then ASR).
+   * 4. Downloads track text (with &tlang for target language translation if requested).
+   * 5. Saves parsed script to Extension Cache Memory and feeds cues to SyncBridge.
+   * 
+   * @param {Object} options
    * @param {Object} options.bridge Active SyncBridge instance
    * @param {HTMLMediaElement} [options.video] HTML5 video element
    * @param {Function} [options.onStatus] Status callback
    * @param {string} [options.preferredLang='auto']
    * @param {string} [options.targetLang='none']
-   * @returns {Promise<{ active: boolean, track?: Object, count?: number, reason?: string, translated?: boolean }>}
+   * @param {boolean} [options.forceRefresh=false]
+   * @returns {Promise<{ active: boolean, track?: Object, count?: number, reason?: string, translated?: boolean, fromCache?: boolean }>}
    */
-  async function initCaptionPath({ bridge, video = null, onStatus = null, preferredLang = 'auto', targetLang = 'none' } = {}) {
+  async function initCaptionPath({ bridge, video = null, onStatus = null, preferredLang = 'auto', targetLang = 'none', forceRefresh = false } = {}) {
     if (!bridge) {
       return { active: false, reason: 'no_bridge' };
     }
@@ -369,7 +521,58 @@
       } catch (_) {}
     }
 
-    // 1. Detect all available tracks (manual + ASR)
+    const currentVid = getVideoId(video);
+
+    // 1. Check Extension Cache Memory first (zero network latency, continuous playback)
+    if (!forceRefresh && currentVid && currentVid !== 'default_video') {
+      try {
+        const cached = await getScriptFromCache(currentVid, targetLang);
+        if (cached && Array.isArray(cached.cues) && cached.cues.length > 0) {
+          console.log(`[CtrlCV Captions] Loaded script from Extension Cache Memory for video ${currentVid} (${cached.cues.length} cues, lang: ${cached.languageCode}).`);
+
+          // STOP audio capture & WS when using cached script
+          try {
+            if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+              chrome.runtime.sendMessage({ action: 'STOP_CAPTURE' }).catch(() => {});
+              chrome.runtime.sendMessage({
+                type: 'STATUS',
+                status: 'Captions',
+                message: `Cached script active (${cached.languageCode}, ${cached.cues.length} cues)`,
+                capture_state: 'idle',
+                ws_state: 'captions',
+                source: 'captions'
+              }).catch(() => {});
+            }
+          } catch (_) {}
+
+          if (typeof onStatus === 'function') {
+            onStatus('Captions', `Cached script active (${cached.languageCode})`);
+          }
+
+          const count = feedCuesToSyncBridge(cached.cues, bridge, {
+            languageCode: cached.languageCode || targetLang || 'en',
+            name: cached.name || 'Extension Cache',
+            kind: 'cached'
+          });
+
+          return {
+            active: true,
+            fromCache: true,
+            track: {
+              languageCode: cached.languageCode || targetLang || 'en',
+              name: 'Extension Cache',
+              kind: 'cached'
+            },
+            count,
+            translated: Boolean(cached.translated)
+          };
+        }
+      } catch (cacheErr) {
+        console.warn('[CtrlCV Captions] Cache memory read error:', cacheErr);
+      }
+    }
+
+    // 2. Cache miss -> Detect all available tracks (manual + ASR)
     const allTracks = detectCaptionTracks(null, { includeAsr: true });
     if (!allTracks || allTracks.length === 0) {
       return { active: false, reason: 'no_tracks' };
@@ -380,7 +583,7 @@
       return { active: false, reason: 'no_track_url' };
     }
 
-    console.log(`[CtrlCV Captions] Found YouTube caption track: ${chosenTrack.name} (${chosenTrack.languageCode}, kind=${chosenTrack.kind}).`);
+    console.log(`[CtrlCV Captions] Found YouTube caption track: ${chosenTrack.name} (${chosenTrack.languageCode}, kind=${chosenTrack.kind}). Downloading script...`);
 
     // STOP audio capture & WS when using YouTube captions
     try {
@@ -401,7 +604,7 @@
       onStatus('Captions', `YouTube captions active (${chosenTrack.languageCode})`);
     }
 
-    // 2. Fetch with multilingual translation if targetLang differs
+    // 3. Fetch with multilingual translation if targetLang differs
     let rawText = '';
     let isTranslated = false;
     const shouldTranslate = targetLang && targetLang !== 'none' && targetLang !== 'auto' && targetLang.toLowerCase() !== chosenTrack.languageCode.toLowerCase();
@@ -437,16 +640,31 @@
       return { active: false, reason: 'empty_cues' };
     }
 
-    // Ingest cues into SyncBridge
+    // 4. Save downloaded & translated script to Extension Cache Memory
+    const finalLang = isTranslated ? targetLang : chosenTrack.languageCode;
+    if (currentVid && currentVid !== 'default_video') {
+      saveScriptToCache(currentVid, targetLang, {
+        videoId: currentVid,
+        languageCode: finalLang,
+        name: chosenTrack.name,
+        kind: chosenTrack.kind,
+        translated: isTranslated,
+        cachedAt: Date.now(),
+        cues: cues
+      }).catch(err => console.warn('[CtrlCV Captions] Failed to save script to cache:', err));
+    }
+
+    // 5. Ingest cues into SyncBridge
     const trackForBridge = {
       ...chosenTrack,
-      languageCode: isTranslated ? targetLang : chosenTrack.languageCode
+      languageCode: finalLang
     };
     const count = feedCuesToSyncBridge(cues, bridge, trackForBridge);
-    console.log(`[CtrlCV Captions] Ingested ${count} cues into SyncBridge (lang: ${trackForBridge.languageCode}).`);
+    console.log(`[CtrlCV Captions] Ingested ${count} cues into SyncBridge (lang: ${trackForBridge.languageCode}). Saved to Extension Cache Memory.`);
 
     return {
       active: true,
+      fromCache: false,
       track: trackForBridge,
       count,
       translated: isTranslated
@@ -463,7 +681,12 @@
     parseCaptionJson,
     parseCaptionText,
     feedCuesToSyncBridge,
-    initCaptionPath
+    initCaptionPath,
+    getVideoId,
+    getScriptCacheKey,
+    getScriptFromCache,
+    saveScriptToCache,
+    clearScriptCache
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -477,9 +700,15 @@
     module.exports.parseCaptionText = parseCaptionText;
     module.exports.feedCuesToSyncBridge = feedCuesToSyncBridge;
     module.exports.initCaptionPath = initCaptionPath;
+    module.exports.getVideoId = getVideoId;
+    module.exports.getScriptCacheKey = getScriptCacheKey;
+    module.exports.getScriptFromCache = getScriptFromCache;
+    module.exports.saveScriptToCache = saveScriptToCache;
+    module.exports.clearScriptCache = clearScriptCache;
   }
   if (typeof globalThis !== 'undefined') {
     globalThis.CtrlCVCaptions = exportObj;
   }
 
 })(typeof globalThis !== 'undefined' ? globalThis : this);
+

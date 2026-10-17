@@ -156,7 +156,8 @@
           targetLang: stored?.target_lang || 'none'
         });
         if (res && res.active) {
-          console.log(`[CtrlCV Pipeline] YouTube caption track loaded (${res.count} cues, lang: ${res.track?.languageCode}${res.translated ? ' translated' : ''}). Tab audio capture stopped.`);
+          const cacheLabel = res.fromCache ? 'from Extension Cache Memory' : 'from YouTube timedtext';
+          console.log(`[CtrlCV Pipeline] Script active (${res.count} cues, lang: ${res.track?.languageCode}${res.translated ? ' translated' : ''}, ${cacheLabel}). Audio capture halted.`);
           return true;
         } else {
           console.log('[CtrlCV Pipeline] No YouTube caption tracks for this video. Tab audio STT path ready.');
@@ -319,7 +320,8 @@
     if (action === 'EXPORT_CUE_LOG') {
       const cueLog = bridge ? bridge.exportLog() : [];
       const archive = bridge ? bridge.exportArchive() : [];
-      sendResponse({ success: true, cueLog, archive });
+      const cues = (Array.isArray(cueLog) && cueLog.length > 0) ? cueLog : (Array.isArray(archive) ? archive : []);
+      sendResponse({ success: true, cueLog, archive, cues });
       return true;
     }
 

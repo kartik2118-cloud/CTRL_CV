@@ -3,380 +3,284 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LiveSub</title>
+  <title>Indic LiveSub</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Anek+Latin:wdth,wght@95..105,400..600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
     body {
       width: 320px;
-      margin: 0;
-      padding: 14px 16px;
-      font: 13px/1.4 'Anek Latin', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      font-variation-settings: "wdth" 102;
-      background: #18181b;
-      color: #f4f4f5;
-      box-sizing: border-box;
+      padding: 16px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      font-size: 13px;
+      line-height: 1.4;
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
-    h2 {
-      margin: 0;
-      font-size: 16px;
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
       font-weight: 700;
       color: #ef4444;
-      display: flex;
-      align-items: center;
-      gap: 6px;
+      letter-spacing: -0.2px;
     }
-    /* Compliance Notice Box */
-    .privacy-notice {
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.35);
-      border-radius: 6px;
-      padding: 8px 10px;
-      font-size: 11px;
-      line-height: 1.45;
-      color: #fca5a5;
-      margin-bottom: 12px;
-    }
-    .privacy-notice strong {
-      color: #fee2e2;
-    }
-    /* Toggle Switch Section */
-    .toggle-section {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #27272a;
-      padding: 10px 12px;
-      border-radius: 6px;
-      margin-bottom: 12px;
-    }
-    .toggle-label {
-      font-weight: 600;
-      font-size: 13px;
-    }
-    .switch-container {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .switch-state-text {
-      font-size: 11px;
-      font-weight: 600;
-      color: #a1a1aa;
-      width: 28px;
-      text-align: right;
-    }
-    .switch-state-text.active {
-      color: #22c55e;
-    }
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 42px;
-      height: 22px;
-      margin: 0;
-    }
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-    .slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background-color: #52525b;
-      transition: .25s;
-      border-radius: 22px;
-    }
-    .slider:before {
-      position: absolute;
-      content: "";
-      height: 16px;
-      width: 16px;
-      left: 3px;
-      bottom: 3px;
-      background-color: white;
-      transition: .25s;
-      border-radius: 50%;
-    }
-    input:checked + .slider {
-      background-color: #22c55e;
-    }
-    input:checked + .slider:before {
-      transform: translateX(20px);
-    }
-    /* Backend URL Configuration */
-    .url-section {
-      background: #27272a;
-      padding: 10px 12px;
-      border-radius: 6px;
-      margin-bottom: 12px;
-    }
-    .url-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #a1a1aa;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .url-row {
-      display: flex;
-      gap: 6px;
-    }
-    input[type="text"] {
-      flex: 1;
-      padding: 6px 8px;
-      border: 1px solid #3f3f46;
-      border-radius: 4px;
-      background: #18181b;
-      color: #f4f4f5;
-      font-size: 11px;
-      font-family: monospace;
-      box-sizing: border-box;
-    }
-    input[type="text"]:focus {
-      outline: none;
-      border-color: #ef4444;
-    }
-    button {
-      padding: 6px 10px;
-      border: 1px solid #3f3f46;
-      border-radius: 5px;
-      background: #3f3f46;
-      color: #fafafa;
-      cursor: pointer;
-      font-size: 11px;
-      font-weight: 500;
-      font-family: inherit;
-      transition: background 0.15s;
-    }
-    button:hover {
-      background: #52525b;
-    }
-    button.primary {
-      background: #ef4444;
-      border-color: #ef4444;
-      color: #ffffff;
-      font-weight: 600;
-    }
-    button.primary:hover {
-      background: #dc2626;
-    }
-    .url-feedback {
+    .logo span.tag {
       font-size: 10px;
-      color: #22c55e;
-      margin-top: 4px;
-      height: 12px;
+      font-weight: 600;
+      background: rgba(239, 68, 68, 0.18);
+      color: #ef4444;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(239, 68, 68, 0.3);
     }
-    /* Action Buttons */
-    .actions-row {
-      display: flex;
-      gap: 6px;
-      margin-bottom: 6px;
-    }
-    .actions-row button {
-      flex: 1;
-      padding: 7px 6px;
-    }
-    /* Status Section */
-    .status-section {
-      display: flex;
+    .status-pill {
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
-      background: #27272a;
-      padding: 8px 12px;
-      border-radius: 6px;
-      margin-bottom: 12px;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 12px;
       font-size: 11px;
+      font-weight: 600;
+      background: rgba(148, 163, 184, 0.15);
+      color: #94a3b8;
     }
-    .status-indicator {
-      width: 8px;
-      height: 8px;
+    .status-dot {
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: #71717a;
-      flex-shrink: 0;
-    }
-    .status-indicator.connecting { background: #eab308; }
-    .status-indicator.streaming { background: #22c55e; }
-    .status-indicator.captions { background: #38bdf8; }
-    .status-indicator.error { background: #ef4444; }
-    .status-text {
-      font-weight: 500;
-      color: #d4d4d8;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      background: currentColor;
     }
 
-    /* Language Options */
-    .lang-section {
-      background: #27272a;
+    /* Main Toggle Capture Button */
+    .btn-capture-wrap {
+      margin-bottom: 14px;
+    }
+    .btn {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      border: none;
+      outline: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(239, 68, 68, 0.45);
+    }
+    .btn-danger {
+      background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+      animation: pulse-danger 2s infinite;
+    }
+    @keyframes pulse-danger {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+      50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: #e2e8f0;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 11px;
+      padding: 7px 10px;
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.14);
+      color: #ffffff;
+    }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Section Boxes */
+    .section-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
       padding: 10px 12px;
-      border-radius: 6px;
       margin-bottom: 12px;
     }
-    .lang-row {
+    .section-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 8px;
+    }
+    .form-group {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 8px;
     }
-    .lang-row:last-child {
+    .form-group:last-child {
       margin-bottom: 0;
     }
-    .lang-row label {
+    label {
       font-size: 11px;
-      color: #a1a1aa;
+      color: #cbd5e1;
       font-weight: 500;
     }
-    .lang-row select {
-      background: #18181b;
-      color: #f4f4f5;
-      border: 1px solid #3f3f46;
-      border-radius: 4px;
-      padding: 4px 6px;
+    select, input[type="text"] {
+      background: #1e293b;
+      color: #f8fafc;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 5px;
+      padding: 5px 8px;
       font-size: 11px;
       outline: none;
-      cursor: pointer;
+      font-family: inherit;
     }
-    .lang-row select:focus {
+    select:focus, input[type="text"]:focus {
       border-color: #ef4444;
     }
-
-    /* Note */
-    .note {
+    select {
+      cursor: pointer;
+      max-width: 140px;
+    }
+    input[type="text"] {
+      width: 100%;
+      font-family: ui-monospace, monospace;
       font-size: 10px;
-      color: #71717a;
-      margin-top: 8px;
-      text-align: center;
+    }
+
+    /* Action Grid */
+    .actions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    /* Notice */
+    .privacy-box {
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.22);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 10px;
+      color: #fca5a5;
+      line-height: 1.35;
+    }
+    .privacy-box strong {
+      color: #fee2e2;
     }
   </style>
 </head>
 <body>
+  <!-- Header -->
   <div class="header">
-    <h2><span>🔴</span> LiveSub</h2>
-  </div>
-
-  <!-- Mandatory Compliance Notice -->
-  <div class="privacy-notice" id="audio-cloud-notice">
-    <strong>Cloud Audio Notice:</strong> Audio from this tab is streamed to a cloud speech recognition service for live transcription and translation.
-  </div>
-
-  <!-- Backend URL Validation Error Banner (K3) -->
-  <div id="url-error-banner" style="display:none; background:#b91c1c; border:1px solid #ef4444; border-radius:6px; padding:8px 10px; font-size:11px; font-weight:600; color:#ffffff; margin-bottom:12px; text-align:center;">
-    ⚠️ Backend URL set nahi hai
-  </div>
-
-  <!-- Status Bar & HUD Telemetry (K2) -->
-  <div class="status-section" style="flex-direction:column; align-items:stretch; gap:6px;">
-    <div style="display:flex; align-items:center; gap:8px;">
-      <span class="status-indicator" id="status-indicator"></span>
-      <span class="status-text" id="status-text">Idle</span>
+    <div class="logo">
+      <span>🔴</span> LiveSub
+      <span class="tag">AI STT</span>
     </div>
-    <div id="hud-status-row" style="display:flex; flex-direction:column; gap:2px; font-family:monospace; font-size:10px; color:#a1a1aa; border-top:1px solid #3f3f46; padding-top:4px;">
-      <div style="display:flex; justify-content:space-between;">
-        <span>Chunks: <b id="hud-chunks" style="color:#facc15;">0</b></span>
-        <span>Results: <b id="hud-results" style="color:#4ade80;">0</b></span>
-        <span>Epoch: <b id="hud-epoch" style="color:#cbd5e1;">1</b></span>
-      </div>
-      <div style="display:flex; justify-content:space-between;">
-        <span>Age: <b id="hud-age" style="color:#cbd5e1;">n/a</b></span>
-        <span>WS: <b id="hud-ws" style="color:#a78bfa;">disconnected</b></span>
-      </div>
-      <div>Error: <span id="hud-error" style="color:#f87171;">none</span></div>
+    <div class="status-pill" id="status-pill">
+      <span class="status-dot"></span>
+      <span id="status-text">Standby</span>
     </div>
   </div>
 
-  <!-- Debug HUD Toggle (K2) -->
-  <div class="toggle-section" style="margin-bottom:8px; padding:6px 12px;">
-    <div class="toggle-label" style="font-size:11px; color:#d4d4d8;">Debug HUD (On-Screen Badge)</div>
-    <div class="switch-container">
-      <label class="switch" style="width:34px; height:18px;">
-        <input type="checkbox" id="toggle-debug-hud" checked>
-        <span class="slider" style="border-radius:18px;"></span>
-      </label>
-    </div>
+  <!-- Main Start/Stop Capture Button -->
+  <div class="btn-capture-wrap">
+    <button id="btn-toggle-capture" class="btn btn-primary">
+      <span>▶</span> Start Audio Capture
+    </button>
   </div>
 
-  <!-- ON/OFF Switch -->
-  <div class="toggle-section">
-    <div class="toggle-label">Live Streaming & Subtitles</div>
-    <div class="switch-container">
-      <span class="switch-state-text" id="toggle-state-text">OFF</span>
-      <label class="switch">
-        <input type="checkbox" id="toggle-active">
-        <span class="slider"></span>
-      </label>
-    </div>
+  <!-- Video Caption & Subtitle Status Banner -->
+  <div id="caption-status-box" style="margin-bottom: 12px; padding: 7px 10px; border-radius: 6px; font-size: 11px; display: flex; align-items: center; gap: 7px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); line-height: 1.35;">
+    <span id="caption-status-icon">🔍</span>
+    <span id="caption-status-text" style="color: #94a3b8; font-weight: 500;">Detecting captions & subtitles...</span>
   </div>
 
   <!-- Language Selection -->
-  <div class="lang-section">
-    <div class="lang-row">
-      <label for="source-lang">Spoken Language</label>
-      <select id="source-lang">
+  <div class="section-card">
+    <div class="section-title">Language Setup</div>
+    <div class="form-group">
+      <label for="select-source-lang">Spoken Audio</label>
+      <select id="select-source-lang">
+        <option value="hi" selected>Hindi (हिंदी)</option>
+        <option value="mr">Marathi (मराठी)</option>
+        <option value="ta">Tamil (தமிழ்)</option>
+        <option value="te">Telugu (తెలుగు)</option>
+        <option value="en">English</option>
         <option value="auto">Auto-detect</option>
-        <option value="hi">Hindi (hi)</option>
-        <option value="mr">Marathi (mr)</option>
-        <option value="ta">Tamil (ta)</option>
-        <option value="te">Telugu (te)</option>
-        <option value="en">English (en)</option>
       </select>
     </div>
-    <div class="lang-row">
-      <label for="target-lang">Translate To</label>
-      <select id="target-lang">
+    <div class="form-group">
+      <label for="select-target-lang">Translate To</label>
+      <select id="select-target-lang">
+        <option value="en" selected>English</option>
+        <option value="hi">Hindi (हिंदी)</option>
+        <option value="mr">Marathi (मराठी)</option>
+        <option value="ta">Tamil (தமிழ்)</option>
+        <option value="te">Telugu (తెలుగు)</option>
         <option value="none">None (Single Subtitle)</option>
-        <option value="en">English (en)</option>
-        <option value="hi">Hindi (hi)</option>
-        <option value="mr">Marathi (mr)</option>
-        <option value="ta">Tamil (ta)</option>
-        <option value="te">Telugu (te)</option>
       </select>
     </div>
   </div>
 
-  <!-- Backend WebSocket URL Field -->
-  <div class="url-section">
-    <div class="url-title">Backend WebSocket URL</div>
-    <div class="url-row">
-      <input type="text" id="backend-url" placeholder="wss://REPLACE_ME/ws" autocomplete="off" spellcheck="false">
-      <button id="btn-save-url">Save</button>
-    </div>
-    <div class="url-feedback" id="url-feedback"></div>
+  <!-- Server Configuration -->
+  <div class="section-card">
+    <div class="section-title">Streaming Backend</div>
+    <input type="text" id="input-ws-url" value="ws://127.0.0.1:8000/ws" spellcheck="false" autocomplete="off">
   </div>
 
-  <!-- Live Demo Subtitle Preview Box in Popup -->
-  <div id="demo-preview-card" style="display:none; background:#18181b; border:1px solid #ef4444; border-radius:6px; padding:10px 12px; margin-bottom:12px; text-align:center;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-      <span id="demo-preview-badge" style="font-size:10px; font-weight:700; color:#ef4444; background:rgba(239,68,68,0.15); padding:2px 6px; border-radius:3px;">LIVE DEMO</span>
-      <span id="demo-preview-status" style="font-size:10px; color:#a1a1aa;">Preview Active</span>
-    </div>
-    <div id="demo-preview-source" style="font-size:13px; font-weight:600; color:#ffffff; margin-bottom:4px; line-height:1.4;"></div>
-    <div id="demo-preview-trans" style="font-size:12px; font-weight:500; color:#ffe082; line-height:1.35;"></div>
+  <!-- Actions -->
+  <div class="actions-grid">
+    <button id="btn-test-overlay" class="btn btn-secondary">
+      <span>✨</span> Demo
+    </button>
+    <button id="btn-clear-overlay" class="btn btn-secondary">
+      <span>✕</span> Clear
+    </button>
+    <button id="btn-export-log" class="btn btn-secondary">
+      <span>📥</span> Cue Log (JSON)
+    </button>
+    <button id="btn-export-srt" class="btn btn-secondary">
+      <span>📄</span> Subtitles (SRT)
+    </button>
+    <button id="btn-clear-cache" class="btn btn-secondary" style="grid-column: span 2;">
+      <span>⚡</span> Clear Script Cache Memory
+    </button>
   </div>
 
-  <!-- Control & Export Buttons -->
-  <div class="actions-row">
-    <button class="primary" id="btn-demo">▶ Demo</button>
-    <button id="btn-clear">✕ Clear</button>
-  </div>
-  <div class="actions-row">
-    <button id="btn-export-log">Export cue log</button>
+  <!-- Cloud Disclosure -->
+  <div class="privacy-box">
+    <strong>Cloud Audio Notice:</strong> Tab audio is streamed to the local backend & Groq Whisper endpoint for real-time speech recognition.
   </div>
 
-  <p class="note">Display styling controls (font, position) are in the ⚙ panel on the video player.</p>
-
-  <script src="../config.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -24,7 +24,12 @@ const {
   parseCaptionXml,
   parseCaptionJson,
   parseCaptionText,
-  feedCuesToSyncBridge
+  feedCuesToSyncBridge,
+  getScriptCacheKey,
+  getScriptFromCache,
+  saveScriptToCache,
+  clearScriptCache,
+  initCaptionPath
 } = CtrlCVCaptions;
 
 import { SyncBridge } from '../../sync/syncBridge.js';
@@ -241,3 +246,134 @@ test('3. SyncBridge Integration: feeds cues with source=captions, seek-back hits
     bridge.destroy();
   }
 });
+
+test('4. Script Cache Memory: stores, retrieves, clears and serves cues from local extension memory', async () => {
+  const store = {};
+  const mockChrome = {
+    storage: {
+      local: {
+        get: (keys, cb) => {
+          if (keys === null) {
+            cb({ ...store });
+          } else if (Array.isArray(keys)) {
+            const res = {};
+            keys.forEach(k => { if (k in store) res[k] = store[k]; });
+            cb(res);
+          } else if (typeof keys === 'string') {
+            cb({ [keys]: store[keys] });
+          } else {
+            cb({ ...store });
+          }
+        },
+        set: (items, cb) => {
+          Object.assign(store, items);
+          if (cb) cb();
+        },
+        remove: (keys, cb) => {
+          const list = Array.isArray(keys) ? keys : [keys];
+          list.forEach(k => delete store[k]);
+          if (cb) cb();
+        }
+      }
+    },
+    runtime: {
+      sendMessage: () => Promise.resolve()
+    }
+  };
+
+  const origChrome = globalThis.chrome;
+  globalThis.chrome = mockChrome;
+
+  try {
+    const videoId = 'test_cache_vid_99';
+    const cuesData = [
+      { start: 1.0, end: 3.5, text: 'नमस्ते दुनिया', translation: 'Hello World' },
+      { start: 4.0, end: 6.5, text: 'यह एक परीक्षण है', translation: 'This is a test' }
+    ];
+
+    // 1. Save script cues to cache
+    const saveResult = await saveScriptToCache(videoId, 'en', {
+      videoId,
+      languageCode: 'en',
+      name: 'Hindi to English Translation',
+      kind: 'manual',
+      translated: true,
+      cachedAt: Date.now(),
+      cues: cuesData
+    });
+    assert.equal(saveResult, true, 'saveScriptToCache must return true');
+
+    // 2. Retrieve script cues from cache
+    const retrieved = await getScriptFromCache(videoId, 'en');
+    assert.ok(retrieved, 'getScriptFromCache must find the cached payload');
+    assert.equal(retrieved.videoId, videoId);
+    assert.equal(retrieved.cues.length, 2);
+    assert.equal(retrieved.cues[0].text, 'नमस्ते दुनिया');
+
+    // 3. Ingest into SyncBridge from cache via initCaptionPath
+    const listeners = {};
+    const fakeVideo = {
+      currentTime: 1.5,
+      playbackRate: 1.0,
+      paused: false,
+      addEventListener(event, fn) {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(fn);
+      },
+      removeEventListener(event, fn) {
+        if (listeners[event]) {
+          listeners[event] = listeners[event].filter(cb => cb !== fn);
+        }
+      }
+    };
+    let rendered = null;
+    const bridge = new SyncBridge({
+      video: fakeVideo,
+      tickMs: 20,
+      minHold: 2.0,
+      render: (cues) => { rendered = cues; }
+    });
+
+    try {
+      // Mock window location with query param for videoId
+      const origWindow = globalThis.window;
+      globalThis.window = {
+        location: {
+          search: `?v=${videoId}`,
+          pathname: '/watch'
+        }
+      };
+
+      const initResult = await initCaptionPath({
+        bridge,
+        video: fakeVideo,
+        targetLang: 'en'
+      });
+
+      assert.equal(initResult.active, true, 'initCaptionPath must be active');
+      assert.equal(initResult.fromCache, true, 'initCaptionPath must serve from local cache memory');
+      assert.equal(initResult.count, 2, 'Must ingest both cues');
+
+      // Tick bridge to confirm display
+      bridge._tick();
+      assert.ok(rendered && rendered.length > 0, 'Cues from cache memory must render on timeline');
+      assert.equal(rendered[0].text, 'नमस्ते दुनिया');
+
+      // 4. Clear cache for the video
+      await clearScriptCache(videoId);
+      const afterClear = await getScriptFromCache(videoId, 'en');
+      assert.equal(afterClear, null, 'Cache must be null after clearing');
+
+      if (origWindow) {
+        globalThis.window = origWindow;
+      } else {
+        delete globalThis.window;
+      }
+    } finally {
+      bridge.destroy();
+    }
+  } finally {
+    globalThis.chrome = origChrome;
+  }
+});
+

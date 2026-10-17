@@ -126,7 +126,7 @@ function applyVideoObservation(obs) {
   }
 }
 
-async function startCapture(streamId, targetTabId = null) {
+async function startCapture(streamId, targetTabId = null, config = {}) {
   if (isCapturing) {
     console.warn('[Offscreen] Capture already running. Ignoring duplicate start.');
     return { success: true, message: 'Already capturing' };
@@ -198,11 +198,19 @@ async function startCapture(streamId, targetTabId = null) {
     // Handle diagnostic metadata and PCM audio from AudioWorklet
     workletNode.port.onmessage = (event) => {
       if (!event.data) return;
+      let pcmData = null;
+      let durationS = 0.4;
       if (event.data.type === 'CHUNK_AUDIO' || event.data.type === 'CHUNK_DIAGNOSTIC') {
         recordDiagnostic(event.data);
-        if (event.data.pcm && wsClient && isCapturing) {
-          wsClient.feedAudioBlock(new Int16Array(event.data.pcm), event.data.audio_duration_s);
-        }
+        pcmData = event.data.pcm;
+        durationS = event.data.audio_duration_s || 0.4;
+      } else if (event.data instanceof ArrayBuffer || (event.data.buffer && event.data.buffer instanceof ArrayBuffer)) {
+        pcmData = event.data.buffer || event.data;
+        durationS = (pcmData.byteLength / 2) / 16000.0;
+      }
+      if (pcmData && wsClient && isCapturing) {
+        const int16Array = (pcmData instanceof Int16Array) ? pcmData : new Int16Array(pcmData);
+        wsClient.feedAudioBlock(int16Array, durationS);
       }
     };
 
@@ -212,9 +220,14 @@ async function startCapture(streamId, targetTabId = null) {
       chrome.runtime.sendMessage({ type: 'STATUS', status: 'Connecting', ws_state: 'connecting' }, () => {
         if (chrome.runtime.lastError) {}
       });
+      chrome.runtime.sendMessage({ type: 'WS_STATE_CHANGED', state: 'connecting' }).catch(() => {});
+
       wsClient = new WsClientClass({
-        targetChunkDuration: 3.0,
-        initialEpoch: currentEpoch,
+        url: config.wsUrl || 'ws://127.0.0.1:8000/ws',
+        lang: config.sourceLanguage || 'hi',
+        targetLang: config.targetLanguage || 'en',
+        targetChunkDuration: 3.2,
+        initialEpoch: typeof config.epoch === 'number' ? config.epoch : currentEpoch,
         initialPlaybackRate: latestAnchor ? latestAnchor.playback_rate : 1.0,
         videoId: currentVideoId,
         onChunkSent: (chunkInfo) => {
@@ -239,8 +252,10 @@ async function startCapture(streamId, targetTabId = null) {
         },
         onResult: (result) => {
           chrome.runtime.sendMessage({
-            type: 'RESULT',
+            type: 'CUE_RESULT',
+            action: 'CUE_RESULT',
             targetTabId: currentTargetTabId,
+            cue: result,
             result: result
           }, () => {
             if (chrome.runtime.lastError) {}
@@ -255,6 +270,10 @@ async function startCapture(streamId, targetTabId = null) {
           }, () => {
             if (chrome.runtime.lastError) {}
           });
+          chrome.runtime.sendMessage({
+            type: 'WS_STATE_CHANGED',
+            state: 'connected'
+          }).catch(() => {});
         },
         onError: (err) => {
           console.warn('[Offscreen WS] Error:', err);
@@ -268,6 +287,11 @@ async function startCapture(streamId, targetTabId = null) {
           }, () => {
             if (chrome.runtime.lastError) {}
           });
+          chrome.runtime.sendMessage({
+            type: 'WS_STATE_CHANGED',
+            state: 'error',
+            error: errMsg
+          }).catch(() => {});
         },
         onClose: () => {
           chrome.runtime.sendMessage({
@@ -277,6 +301,10 @@ async function startCapture(streamId, targetTabId = null) {
           }, () => {
             if (chrome.runtime.lastError) {}
           });
+          chrome.runtime.sendMessage({
+            type: 'WS_STATE_CHANGED',
+            state: 'disconnected'
+          }).catch(() => {});
         }
       });
 
@@ -413,7 +441,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'START_OFFSCREEN_CAPTURE') {
-    startCapture(message.streamId, message.targetTabId)
+    startCapture(message.streamId, message.targetTabId || message.tabId, {
+      wsUrl: message.wsUrl,
+      sourceLanguage: message.sourceLanguage,
+      targetLanguage: message.targetLanguage,
+      epoch: message.epoch
+    })
       .then(sendResponse)
       .catch((err) => sendResponse({ success: false, error: err.message || String(err) }));
     return true;
@@ -426,10 +459,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-
-
   if (message.type === 'VIDEO_STATE_OBSERVATION') {
     applyVideoObservation(message.observation);
+    return false;
+  }
+
+  if (message.type === 'TIMELINE_EVENT') {
+    const ev = message.event;
+    if (ev && wsClient) {
+      if (ev.type === 'seek' && typeof ev.videoTime === 'number') {
+        wsClient.sendSeek(ev.videoTime, null, 'seek');
+      } else if (ev.type === 'ratechange' && typeof ev.playbackRate === 'number') {
+        wsClient.setPlaybackRate(ev.playbackRate);
+      }
+    }
     return false;
   }
 

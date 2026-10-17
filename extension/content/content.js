@@ -686,14 +686,305 @@ function initSpaNavigationListeners() {
  * - 'GET_STATUS':
  *     returns: { currentVideoId, isAttached: !!overlayHostEl, currentStyle }
  */
+// ─── Cue Log Storage & Export (K4, Evaluation Contract) ───────────────────────
+const recordedCues = [];
+
+function recordCue(cue) {
+  if (!cue) return;
+  const cleanText = (cue.text || '').trim();
+  if (!cleanText) return;
+
+  const existing = recordedCues.find(c => c.cueId && c.cueId === cue.cueId);
+  if (existing) {
+    existing.text = cleanText;
+    existing.translation = (cue.translation || existing.translation || '').trim();
+    if (cue.end !== undefined) existing.end = Number(cue.end);
+    if (!existing.revisions) existing.revisions = [];
+    existing.revisions.push({ at: cue.start !== undefined ? Number(cue.start) : 0.0, text: cleanText });
+  } else {
+    recordedCues.push({
+      cueId: cue.cueId || `cue_${Date.now()}_${recordedCues.length}`,
+      start: cue.start !== undefined ? Number(cue.start) : 0.0,
+      end: cue.end !== undefined ? Number(cue.end) : 2.5,
+      lang: cue.lang || 'hi',
+      text: cleanText,
+      translation: (cue.translation || cleanText).trim(),
+      source: cue.source || 'stt',
+      first_shown_at: performance.now() / 1000.0,
+      revisions: [{ at: cue.start !== undefined ? Number(cue.start) : 0.0, text: cleanText }]
+    });
+  }
+}
+
+async function getOrFetchCues({ allowDemo = false, targetLang = null } = {}) {
+  if (recordedCues.length > 0) {
+    return recordedCues;
+  }
+
+  // 1. Try SyncBridge archive if available
+  if (window.__ctrlcvBridge && typeof window.__ctrlcvBridge.exportArchive === 'function') {
+    try {
+      const archive = window.__ctrlcvBridge.exportArchive();
+      if (archive && Array.isArray(archive.cues) && archive.cues.length > 0) {
+        archive.cues.forEach(c => recordCue(c));
+        return recordedCues;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Extract and parse native YouTube video caption tracks (Manual or ASR)
+  const captionsApi = globalThis.CtrlCVCaptions;
+  if (captionsApi && typeof captionsApi.detectCaptionTracks === 'function') {
+    try {
+      const allTracks = captionsApi.detectCaptionTracks(null, { includeAsr: true });
+      if (allTracks && allTracks.length > 0) {
+        const langPref = selectedLanguage || 'hi';
+        const chosen = captionsApi.chooseCaptionTrack(allTracks, langPref);
+        if (chosen && chosen.baseUrl) {
+          let fetchUrl = chosen.baseUrl;
+          const tgt = (targetLang && targetLang !== 'none' && targetLang !== 'auto') ? targetLang : '';
+          if (tgt && tgt.toLowerCase() !== chosen.languageCode.toLowerCase()) {
+            fetchUrl += `&tlang=${encodeURIComponent(tgt)}`;
+          }
+          const resp = await fetch(fetchUrl);
+          if (resp.ok) {
+            const raw = await resp.text();
+            const parsedCues = captionsApi.parseCaptionText(raw);
+            if (parsedCues && parsedCues.length > 0) {
+              parsedCues.forEach((c, idx) => {
+                recordCue({
+                  cueId: `yt_cap_${idx + 1}`,
+                  start: c.start,
+                  end: c.end,
+                  text: c.text,
+                  translation: c.text,
+                  lang: tgt || chosen.languageCode || 'hi',
+                  source: chosen.isAsr ? 'youtube_asr' : 'youtube_manual'
+                });
+              });
+              return recordedCues;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[LiveSub] Error extracting YouTube captions:', e);
+    }
+  }
+
+  // 3. Fallback to sequence of demo steps if demo was explicitly allowed/requested
+  if (allowDemo) {
+    const demoSeq = DEMO_SEQUENCES[selectedLanguage] || DEMO_SEQUENCES['hindi'];
+    if (demoSeq && demoSeq.length > 0) {
+      let t = 0.0;
+      demoSeq.forEach((step, idx) => {
+        const dur = (step.duration || 3000) / 1000.0;
+        recordCue({
+          cueId: `demo_${idx + 1}`,
+          start: Number(t.toFixed(3)),
+          end: Number((t + dur).toFixed(3)),
+          text: step.text,
+          translation: step.translation,
+          lang: step.lang || selectedLanguage,
+          source: 'demo'
+        });
+        t += dur;
+      });
+      return recordedCues;
+    }
+  }
+
+  return recordedCues;
+}
+
+window.__ctrlcvExportCueLog = function() {
+  return {
+    videoId: currentVideoId || 'youtube',
+    createdAt: new Date().toISOString(),
+    targetLanguage: selectedLanguage || 'en',
+    cues: recordedCues
+  };
+};
+
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || !message.action) return false;
+    if (!message) return false;
+    const action = message.action || message.type;
+    if (!action) return false;
 
     const video = getCurrentVideoElement();
     const currentTime = video ? video.currentTime : null;
 
-    switch (message.action) {
+    if (action === 'PING') {
+      sendResponse({ status: 'pong', version: '1.0.1' });
+      return true;
+    }
+
+    if (action === 'CHECK_CAPTION_STATUS') {
+      const captionsApi = globalThis.CtrlCVCaptions;
+      let tracks = [];
+      const vid = currentVideoId || getVideoIdFromUrl() || 'youtube';
+      if (captionsApi && typeof captionsApi.detectCaptionTracks === 'function') {
+        tracks = captionsApi.detectCaptionTracks(null, { includeAsr: true });
+      }
+      if (captionsApi && typeof captionsApi.getScriptFromCache === 'function') {
+        captionsApi.getScriptFromCache(vid, selectedLanguage).then(cached => {
+          sendResponse({
+            videoId: vid,
+            recordedCuesCount: recordedCues.length,
+            hasCaptions: tracks.length > 0,
+            hasCache: Boolean(cached && cached.cues?.length > 0),
+            cachedCueCount: cached?.cues?.length || 0,
+            tracks: tracks.map(t => ({ languageCode: t.languageCode, name: t.name, isAsr: t.isAsr }))
+          });
+        }).catch(() => {
+          sendResponse({
+            videoId: vid,
+            recordedCuesCount: recordedCues.length,
+            hasCaptions: tracks.length > 0,
+            hasCache: false,
+            cachedCueCount: 0,
+            tracks: tracks.map(t => ({ languageCode: t.languageCode, name: t.name, isAsr: t.isAsr }))
+          });
+        });
+        return true;
+      }
+      sendResponse({
+        videoId: vid,
+        recordedCuesCount: recordedCues.length,
+        hasCaptions: tracks.length > 0,
+        hasCache: false,
+        cachedCueCount: 0,
+        tracks: tracks.map(t => ({ languageCode: t.languageCode, name: t.name, isAsr: t.isAsr }))
+      });
+      return true;
+    }
+
+    if (action === 'CLEAR_SCRIPT_CACHE') {
+      const captionsApi = globalThis.CtrlCVCaptions;
+      const vid = currentVideoId || getVideoIdFromUrl() || null;
+      if (captionsApi && typeof captionsApi.clearScriptCache === 'function') {
+        captionsApi.clearScriptCache(vid).then(() => {
+          sendResponse({ success: true });
+        }).catch(err => {
+          sendResponse({ success: false, error: err?.message || String(err) });
+        });
+        return true;
+      }
+      sendResponse({ success: false, error: 'no_api' });
+      return true;
+    }
+
+    if (action === 'GET_CUE_LOG' || action === 'EXPORT_CUE_LOG') {
+      const allowDemo = Boolean(message.allowDemo);
+      const targetLang = message.targetLanguage || selectedLanguage;
+      getOrFetchCues({ allowDemo, targetLang }).then((cues) => {
+        sendResponse({
+          videoId: currentVideoId || getVideoIdFromUrl() || 'youtube',
+          createdAt: new Date().toISOString(),
+          targetLanguage: targetLang || 'en',
+          cues: cues || [],
+          count: (cues || []).length
+        });
+      }).catch((err) => {
+        sendResponse({
+          videoId: currentVideoId || getVideoIdFromUrl() || 'youtube',
+          createdAt: new Date().toISOString(),
+          targetLanguage: 'en',
+          cues: recordedCues || [],
+          count: (recordedCues || []).length,
+          error: String(err)
+        });
+      });
+      return true;
+    }
+
+    if (action === 'GET_VIDEO_OBSERVATION') {
+      const v = getCurrentVideoElement();
+      if (v) {
+        sendResponse({
+          observation: {
+            wall_time_ms: Date.now(),
+            video_current_time: v.currentTime,
+            playback_rate: v.playbackRate,
+            paused: v.paused,
+            seeking: v.seeking,
+            video_id: getVideoIdFromUrl(),
+            epoch: debugHudState.epoch || 1,
+            ad_state: document.querySelector('.ad-showing') ? 'ad_playing' : 'none'
+          }
+        });
+      } else {
+        sendResponse({ observation: null });
+      }
+      return true;
+    }
+
+    if (action === 'RENDER_CUE') {
+      const cue = message.cue || {};
+      recordCue(cue);
+      const ok = showSubtitle({
+        text: cue.text || '',
+        translation: cue.translation || '',
+        lang: cue.lang || ''
+      });
+      if (typeof window.__livesubOnResult === 'function') {
+        window.__livesubOnResult({ result: cue, epoch: cue.epoch });
+      }
+
+      // Auto-clear subtitle after 4.5 seconds if speech stops so stale text doesn't linger
+      if (window.__livesubAutoClearTimer) {
+        clearTimeout(window.__livesubAutoClearTimer);
+      }
+      window.__livesubAutoClearTimer = setTimeout(() => {
+        if (!window.__livesubIsDemoRunning) {
+          clearSubtitle();
+        }
+      }, 4500);
+
+      sendResponse({ status: ok ? 'rendered' : 'player_not_attached', cueId: cue.cueId });
+      return true;
+    }
+
+    if (action === 'CHUNK_SENT') {
+      if (typeof window.__livesubOnChunkSent === 'function') {
+        window.__livesubOnChunkSent(message.chunkInfo || message);
+      }
+      sendResponse({ status: 'ok' });
+      return true;
+    }
+
+    if (action === 'CAPTURE_STATUS_CHANGED') {
+      if (typeof window.__livesubUpdateHud === 'function') {
+        window.__livesubUpdateHud({
+          capture_state: message.isCapturing ? 'capturing' : 'idle',
+          last_error: message.error || 'none'
+        });
+      }
+      sendResponse({ status: 'ok' });
+      return true;
+    }
+
+    if (action === 'WS_STATE_CHANGED') {
+      if (typeof window.__livesubUpdateHud === 'function') {
+        window.__livesubUpdateHud({
+          ws_state: message.state || 'unknown',
+          last_error: message.error || 'none'
+        });
+      }
+      sendResponse({ status: 'ok' });
+      return true;
+    }
+
+    if (action === 'SET_SETTINGS') {
+      if (message.targetLanguage) {
+        selectedLanguage = message.targetLanguage;
+      }
+      sendResponse({ status: 'ok' });
+      return true;
+    }
+
+    switch (action) {
       case 'RUN_DEMO': {
         const lang = message.lang || selectedLanguage;
         runDemoSequence(lang);
@@ -766,8 +1057,8 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
 
       case 'EXPORT_CUE_LOG': {
         const cueLog = (typeof window.__ctrlcvExportCueLog === 'function')
-          ? window.__ctrlcvExportCueLog(false)
-          : [];
+          ? window.__ctrlcvExportCueLog()
+          : { videoId: currentVideoId || 'youtube', createdAt: new Date().toISOString(), cues: [] };
         sendResponse({ success: true, cueLog });
         return true;
       }
@@ -875,6 +1166,66 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
   });
 }
 
+let lastObservationTime = 0;
+
+function sendVideoObservation(video) {
+  if (!video || typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  const now = Date.now();
+  if (now - lastObservationTime < 400) return;
+  lastObservationTime = now;
+
+  const obs = {
+    wall_time_ms: now,
+    video_current_time: video.currentTime,
+    playback_rate: video.playbackRate,
+    paused: video.paused,
+    seeking: video.seeking,
+    video_id: getVideoIdFromUrl(),
+    epoch: debugHudState.epoch || 1,
+    ad_state: document.querySelector('.ad-showing') ? 'ad_playing' : 'none'
+  };
+
+  chrome.runtime.sendMessage({
+    type: 'VIDEO_STATE_OBSERVATION',
+    observation: obs
+  }).catch(() => {});
+}
+
+function setupVideoTimelineListeners() {
+  const video = getCurrentVideoElement();
+  if (!video || video.__livesubListenersAttached) return;
+  video.__livesubListenersAttached = true;
+
+  video.addEventListener('timeupdate', () => {
+    sendVideoObservation(video);
+  });
+
+  video.addEventListener('seeking', () => {
+    if (window.__livesubAutoClearTimer) clearTimeout(window.__livesubAutoClearTimer);
+    clearSubtitle();
+    chrome.runtime.sendMessage({
+      type: 'TIMELINE_EVENT',
+      event: { type: 'seek', videoTime: video.currentTime }
+    }).catch(() => {});
+    sendVideoObservation(video);
+  });
+
+  video.addEventListener('seeked', () => {
+    sendVideoObservation(video);
+  });
+
+  video.addEventListener('ratechange', () => {
+    chrome.runtime.sendMessage({
+      type: 'TIMELINE_EVENT',
+      event: { type: 'ratechange', playbackRate: video.playbackRate }
+    }).catch(() => {});
+    sendVideoObservation(video);
+  });
+
+  video.addEventListener('play', () => sendVideoObservation(video));
+  video.addEventListener('pause', () => sendVideoObservation(video));
+}
+
 // ─── Setup & Player Replacement ───────────────────────────────────────────────
 function initAll(allowBodyFallback = false) {
   const player = getPlayerElement(allowBodyFallback);
@@ -884,6 +1235,7 @@ function initAll(allowBodyFallback = false) {
       attachControls(player);
     }
     currentVideoId = getVideoIdFromUrl();
+    setupVideoTimelineListeners();
     return true;
   }
   return false;

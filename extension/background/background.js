@@ -162,6 +162,7 @@ async function stopCapture() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return false;
   const msgType = message.type || message.action;
+  const type = msgType;
   const targetTab = message.tabId || message.targetTabId || sender.tab?.id || activeTabId;
 
   if (msgType === 'START_CAPTURE') {
