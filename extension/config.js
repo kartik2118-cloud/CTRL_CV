@@ -6,7 +6,7 @@
 (function(root) {
   'use strict';
 
-  var DEFAULT_WS_URL = 'wss://REPLACE_ME/ws';
+  var DEFAULT_WS_URL = 'ws://127.0.0.1:8000/ws';
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = { DEFAULT_WS_URL: DEFAULT_WS_URL };
