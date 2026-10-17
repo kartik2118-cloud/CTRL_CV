@@ -92,6 +92,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (normalized === 'Streaming') {
       statusText.textContent = 'Streaming';
       statusText.title = '';
+    } else if (normalized === 'Captions') {
+      statusText.textContent = 'Captions';
+      statusText.title = message || 'Using manual YouTube captions';
     } else {
       statusText.textContent = 'Idle';
       statusText.title = '';

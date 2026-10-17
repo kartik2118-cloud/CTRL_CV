@@ -33,6 +33,7 @@
       "matches": ["https://www.youtube.com/*"],
       "js":  [
         "vendor/syncEngine.browser.js",
+        "content/caption_path.js",
         "content/pipeline.js",
         "content/content.js"
       ],
@@ -57,7 +58,8 @@
       "resources": [
         "offscreen/audio-processor.js",
         "offscreen/ws_client.js",
-        "vendor/syncEngine.browser.js"
+        "vendor/syncEngine.browser.js",
+        "content/caption_path.js"
       ],
       "matches": [
         "https://www.youtube.com/*"

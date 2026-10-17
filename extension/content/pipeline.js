@@ -136,6 +136,25 @@
 
     sendVideoObservation(true);
     console.log('[CtrlCV Pipeline] SyncBridge mounted to video element.');
+    setTimeout(checkForManualCaptions, 400);
+  }
+
+  async function checkForManualCaptions() {
+    if (typeof globalThis.CtrlCVCaptions?.initCaptionPath === 'function' && bridge) {
+      try {
+        const res = await globalThis.CtrlCVCaptions.initCaptionPath({
+          bridge,
+          video: activeVideoEl
+        });
+        if (res && res.active) {
+          console.log(`[CtrlCV Pipeline] Manual caption track loaded (${res.count} cues). Tab audio capture stopped.`);
+          return true;
+        }
+      } catch (err) {
+        console.warn('[CtrlCV Pipeline] Caption check error:', err);
+      }
+    }
+    return false;
   }
 
   let pollInterval = null;
@@ -174,6 +193,7 @@
     }
     sendVideoObservation(true);
     pollForVideo();
+    setTimeout(checkForManualCaptions, 400);
   });
 
   // 6. Ad Detection Observer
