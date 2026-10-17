@@ -25,9 +25,9 @@ class SarvamTranslationProvider(TranslationProvider):
         "en": "en-IN",
     }
 
-    def __init__(self, api_key: str | None = None, model: str = "mayura:v1"):
+    def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("SARVAM_API_KEY", "")
-        self.model = model
+        self.model = model or os.getenv("SARVAM_TRANSLATION_MODEL", "mayura:v1")
         self._cache: dict[tuple[str, str, str], str] = {}
 
     def _normalize_lang(self, code: str) -> str:

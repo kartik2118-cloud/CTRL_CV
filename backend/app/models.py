@@ -9,6 +9,7 @@ class HelloMessage(BaseModel):
     client_id: Optional[str] = None
     lang: str = "en"
     target_lang: Optional[str] = None
+    token: Optional[str] = None
 
 
 class ChunkMetaMessage(BaseModel):
@@ -18,6 +19,7 @@ class ChunkMetaMessage(BaseModel):
     playback_rate: float = 1.0
     epoch: int = 0
     duration: float = 1.0
+    byte_length: Optional[int] = None
 
 
 class SeekMessage(BaseModel):
@@ -55,6 +57,11 @@ class SubtitleResult(BaseModel):
     text: str
     translation: Optional[str] = None
     source: str = "mock"
+    is_final: bool = True
+    revision: int = 1
+    start_offset: Optional[float] = None
+    end_offset: Optional[float] = None
+    langs: Optional[list[str]] = None
 
 
 class SeekAckMessage(BaseModel):
@@ -72,4 +79,6 @@ class ConfigAckMessage(BaseModel):
 
 class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
+    code: Optional[str] = None
     detail: str
+    message: Optional[str] = None
