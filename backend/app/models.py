@@ -10,6 +10,7 @@ class HelloMessage(BaseModel):
     lang: str = "en"
     target_lang: Optional[str] = None
     token: Optional[str] = None
+    video_id: Optional[str] = None
 
 
 class ChunkMetaMessage(BaseModel):
@@ -20,12 +21,14 @@ class ChunkMetaMessage(BaseModel):
     epoch: int = 0
     duration: float = 1.0
     byte_length: Optional[int] = None
+    video_id: Optional[str] = None
 
 
 class SeekMessage(BaseModel):
     type: Literal["seek"] = "seek"
     video_time: float
     epoch: Optional[int] = None
+    video_id: Optional[str] = None
 
 
 class ConfigMessage(BaseModel):

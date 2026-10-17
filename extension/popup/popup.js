@@ -337,20 +337,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const DEMO_SEQUENCES = {
       hindi: [
-        { text: 'नमस्ते! LiveSub में आपका स्वागत है।', translation: 'Welcome to LiveSub real-time transcription.', lang: 'HI / EN' },
-        { text: 'यह तकनीक स्वचालित रूप से भाषा पहचानती है।', translation: 'This technology automatically detects and translates speech.', lang: 'HI / EN' },
-        { text: 'आज हम स्वादिष्ट पनीर टिक्का रेसिपी देखेंगे।', translation: 'Today we will explore a delicious paneer tikka recipe.', lang: 'HI / EN' },
-        { text: 'सेटिंग्स से आप फॉन्ट का आकार और स्थिति बदल सकते हैं।', translation: 'You can adjust font size and position from settings.', lang: 'HI / EN' }
+        { text: "We're no strangers to love, you know the rules and so do I", translation: "हम प्यार से अनजान नहीं हैं, तुम नियम जानते हो और मैं भी", lang: "HI / EN" },
+        { text: "A full commitment's what I'm thinking of, you wouldn't get this from any other guy", translation: "मैं एक पूर्ण समर्पण के बारे में सोच रहा हूँ, तुम्हें यह किसी और से नहीं मिलेगा", lang: "HI / EN" },
+        { text: "I just wanna tell you how I'm feeling, gotta make you understand", translation: "मैं बस तुम्हें बताना चाहता हूँ कि मैं कैसा महसूस कर रहा हूँ, तुम्हें समझाना ही होगा", lang: "HI / EN" },
+        { text: "Never gonna give you up, never gonna let you down", translation: "तुम्हें कभी नहीं छोड़ूँगा, कभी निराश नहीं करूँगा", lang: "HI / EN" },
+        { text: "Never gonna run around and desert you", translation: "कभी भागूँगा नहीं और तुम्हें अकेला नहीं छोड़ूँगा", lang: "HI / EN" },
+        { text: "Never gonna make you cry, never gonna say goodbye", translation: "कभी तुम्हें रुलाऊँगा नहीं, कभी अलविदा नहीं कहूँगा", lang: "HI / EN" },
+        { text: "Never gonna tell a lie and hurt you", translation: "कभी झूठ नहीं बोलूँगा और तुम्हें चोट नहीं पहुँचाऊँगा", lang: "HI / EN" }
       ],
       marathi: [
-        { text: 'नमस्कार! LiveSub मध्ये आपले स्वागत आहे.', translation: 'Welcome to LiveSub real-time transcription.', lang: 'MR / EN' },
-        { text: 'ही प्रणाली व्हिडिओचे थेट भाषांतर करते.', translation: 'This system provides live video translation.', lang: 'MR / EN' },
-        { text: 'आज आपण पनीर टिक्का बनवणार आहोत.', translation: 'Today we will make paneer tikka.', lang: 'MR / EN' }
+        { text: "We're no strangers to love, you know the rules and so do I", translation: "आपण प्रेमासाठी अनोळखी नाही, तुम्हाला नियम माहीत आहेत आणि मलाही", lang: "MR / EN" },
+        { text: "A full commitment's what I'm thinking of, you wouldn't get this from any other guy", translation: "मी पूर्ण समर्पणाचा विचार करत आहे, हे इतर कोणाकडून मिळणार नाही", lang: "MR / EN" },
+        { text: "I just wanna tell you how I'm feeling, gotta make you understand", translation: "मला फक्त सांगायचे आहे की मला कसे वाटते, तुला समजावून सांगावेच लागेल", lang: "MR / EN" },
+        { text: "Never gonna give you up, never gonna let you down", translation: "तुला कधीही सोडणार नाही, कधीही निराश करणार नाही", lang: "MR / EN" },
+        { text: "Never gonna run around and desert you", translation: "कधीही पळून जाणार नाही आणि तुला एकटे सोडणार नाही", lang: "MR / EN" },
+        { text: "Never gonna make you cry, never gonna say goodbye", translation: "तुला कधीही रडवणार नाही, कधीही निरोप घेणार नाही", lang: "MR / EN" },
+        { text: "Never gonna tell a lie and hurt you", translation: "कधीही खोटे बोलणार नाही आणि तुला दुखावणार नाही", lang: "MR / EN" }
       ],
       english: [
-        { text: 'Welcome to LiveSub Real-Time Subtitles!', translation: 'AI-powered speech recognition and synchronization.', lang: 'EN' },
-        { text: 'Zero-latency subtitle rendering with exact video sync.', translation: 'Adaptive seeking and epoch tracking active.', lang: 'EN' },
-        { text: 'Multilingual dual-row subtitles for any YouTube video.', translation: 'Hindi, Marathi, Tamil, Telugu, and English supported.', lang: 'EN' }
+        { text: "We're no strangers to love, you know the rules and so do I", translation: "A full commitment's what I'm thinking of", lang: "EN" },
+        { text: "You wouldn't get this from any other guy", translation: "I just wanna tell you how I'm feeling", lang: "EN" },
+        { text: "Gotta make you understand", translation: "Never gonna give you up, never gonna let you down", lang: "EN" },
+        { text: "Never gonna run around and desert you", translation: "Never gonna make you cry, never gonna say goodbye", lang: "EN" },
+        { text: "Never gonna tell a lie and hurt you", translation: "We've known each other for so long", lang: "EN" }
       ]
     };
 

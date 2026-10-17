@@ -23,6 +23,7 @@ class SessionState:
         self.chunk_timestamps: list[float] = []
         self.in_flight_tasks: set = set()
         self.client_protocol: str = "default"
+        self.video_id: Optional[str] = None
 
     def touch(self):
         self.last_active_time = time.time()

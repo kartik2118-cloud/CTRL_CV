@@ -216,6 +216,7 @@ async function startCapture(streamId, targetTabId = null) {
         targetChunkDuration: 2.5,
         initialEpoch: currentEpoch,
         initialPlaybackRate: latestAnchor ? latestAnchor.playback_rate : 1.0,
+        videoId: currentVideoId,
         onChunkSent: (chunkInfo) => {
           chrome.runtime.sendMessage({
             type: 'CHUNK_SENT',

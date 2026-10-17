@@ -27,25 +27,37 @@ function getPlayerElement(allowBodyFallback = false) {
 const POLL_INTERVAL_MS = 400;
 const MAX_POLL_ATTEMPTS = 30; // 12 seconds total
 
-// Language support & sequential demo steps
+// Language support & sequential demo steps (Rick Astley - Never Gonna Give You Up & Multilingual)
 const DEMO_SEQUENCES = {
   hindi: [
-    { text: 'नमस्ते! LiveSub में आपका स्वागत है।', translation: 'Welcome to LiveSub real-time transcription.', lang: 'HI / EN', duration: 2800 },
-    { text: 'यह तकनीक स्वचालित रूप से भाषा पहचानती है।', translation: 'This technology automatically detects and translates speech.', lang: 'HI / EN', duration: 2800 },
-    { text: 'आज हम स्वादिष्ट पनीर टिक्का रेसिपी देखेंगे।', translation: 'Today we will explore a delicious paneer tikka recipe.', lang: 'HI / EN', duration: 2800 },
-    { text: 'सेटिंग्स से आप फॉन्ट का आकार और स्थिति बदल सकते हैं।', translation: 'You can adjust font size and position from settings.', lang: 'HI / EN', duration: 2800 }
+    { text: "We're no strangers to love, you know the rules and so do I", translation: "हम प्यार से अनजान नहीं हैं, तुम नियम जानते हो और मैं भी", lang: "HI / EN", duration: 3200 },
+    { text: "A full commitment's what I'm thinking of, you wouldn't get this from any other guy", translation: "मैं एक पूर्ण समर्पण के बारे में सोच रहा हूँ, तुम्हें यह किसी और से नहीं मिलेगा", lang: "HI / EN", duration: 3200 },
+    { text: "I just wanna tell you how I'm feeling, gotta make you understand", translation: "मैं बस तुम्हें बताना चाहता हूँ कि मैं कैसा महसूस कर रहा हूँ, तुम्हें समझाना ही होगा", lang: "HI / EN", duration: 3200 },
+    { text: "Never gonna give you up, never gonna let you down", translation: "तुम्हें कभी नहीं छोड़ूँगा, कभी निराश नहीं करूँगा", lang: "HI / EN", duration: 3000 },
+    { text: "Never gonna run around and desert you", translation: "कभी भागूँगा नहीं और तुम्हें अकेला नहीं छोड़ूँगा", lang: "HI / EN", duration: 3000 },
+    { text: "Never gonna make you cry, never gonna say goodbye", translation: "कभी तुम्हें रुलाऊँगा नहीं, कभी अलविदा नहीं कहूँगा", lang: "HI / EN", duration: 3000 },
+    { text: "Never gonna tell a lie and hurt you", translation: "कभी झूठ नहीं बोलूँगा और तुम्हें चोट नहीं पहुँचाऊँगा", lang: "HI / EN", duration: 3000 },
+    { text: "We've known each other for so long, your heart's been aching", translation: "हम एक दूसरे को बहुत समय से जानते हैं, तुम्हारा दिल दुख रहा है", lang: "HI / EN", duration: 3200 },
+    { text: "Inside we both know what's been going on, we know the game and we're gonna play it", translation: "अंदर ही अंदर हम दोनों जानते हैं कि क्या चल रहा है, हम खेल जानते हैं और इसे खेलेंगे", lang: "HI / EN", duration: 3200 }
   ],
   marathi: [
-    { text: 'नमस्कार! LiveSub मध्ये आपले स्वागत आहे.', translation: 'Welcome to LiveSub real-time transcription.', lang: 'MR / EN', duration: 2800 },
-    { text: 'ही प्रणाली व्हिडिओचे थेट भाषांतर करते.', translation: 'This system provides live video translation.', lang: 'MR / EN', duration: 2800 },
-    { text: 'आज आपण पनीर टिक्का बनवणार आहोत.', translation: 'Today we will make paneer tikka.', lang: 'MR / EN', duration: 2800 },
-    { text: 'आपण सहजपणे उपशीर्षकाचा आकार बदलू शकता.', translation: 'You can easily adjust subtitle styling.', lang: 'MR / EN', duration: 2800 }
+    { text: "We're no strangers to love, you know the rules and so do I", translation: "आपण प्रेमासाठी अनोळखी नाही, तुम्हाला नियम माहीत आहेत आणि मलाही", lang: "MR / EN", duration: 3200 },
+    { text: "A full commitment's what I'm thinking of, you wouldn't get this from any other guy", translation: "मी पूर्ण समर्पणाचा विचार करत आहे, हे इतर कोणाकडून मिळणार नाही", lang: "MR / EN", duration: 3200 },
+    { text: "I just wanna tell you how I'm feeling, gotta make you understand", translation: "मला फक्त सांगायचे आहे की मला कसे वाटते, तुला समजावून सांगावेच लागेल", lang: "MR / EN", duration: 3200 },
+    { text: "Never gonna give you up, never gonna let you down", translation: "तुला कधीही सोडणार नाही, कधीही निराश करणार नाही", lang: "MR / EN", duration: 3000 },
+    { text: "Never gonna run around and desert you", translation: "कधीही पळून जाणार नाही आणि तुला एकटे सोडणार नाही", lang: "MR / EN", duration: 3000 },
+    { text: "Never gonna make you cry, never gonna say goodbye", translation: "तुला कधीही रडवणार नाही, कधीही निरोप घेणार नाही", lang: "MR / EN", duration: 3000 },
+    { text: "Never gonna tell a lie and hurt you", translation: "कधीही खोटे बोलणार नाही आणि तुला दुखावणार नाही", lang: "MR / EN", duration: 3000 },
+    { text: "We've known each other for so long, your heart's been aching", translation: "आपण एकमेकांना खूप दिवसांपासून ओळखतो, तुझे मन दुखत आहे", lang: "MR / EN", duration: 3200 },
+    { text: "Inside we both know what's been going on, we know the game and we're gonna play it", translation: "आतल्या आत आपल्या दोघांना माहीत आहे काय चालले आहे, आपल्याला खेळ माहीत आहे", lang: "MR / EN", duration: 3200 }
   ],
   english: [
-    { text: 'Welcome to LiveSub Real-Time Subtitles!', translation: 'AI-powered speech recognition and synchronization.', lang: 'EN', duration: 2800 },
-    { text: 'Zero-latency subtitle rendering with exact video sync.', translation: 'Adaptive seeking and epoch tracking active.', lang: 'EN', duration: 2800 },
-    { text: 'Multilingual dual-row subtitles for any YouTube video.', translation: 'Hindi, Marathi, Tamil, Telugu, and English supported.', lang: 'EN', duration: 2800 },
-    { text: 'Demo running smoothly! Turn ON to stream live speech.', translation: 'Toggle switch in popup to transcribe video in real time.', lang: 'EN', duration: 2800 }
+    { text: "We're no strangers to love, you know the rules and so do I", translation: "A full commitment's what I'm thinking of", lang: "EN", duration: 3200 },
+    { text: "You wouldn't get this from any other guy", translation: "I just wanna tell you how I'm feeling", lang: "EN", duration: 3200 },
+    { text: "Gotta make you understand", translation: "Never gonna give you up, never gonna let you down", lang: "EN", duration: 3000 },
+    { text: "Never gonna run around and desert you", translation: "Never gonna make you cry, never gonna say goodbye", lang: "EN", duration: 3000 },
+    { text: "Never gonna tell a lie and hurt you", translation: "We've known each other for so long", lang: "EN", duration: 3000 },
+    { text: "Inside we both know what's been going on", translation: "We know the game and we're gonna play it", lang: "EN", duration: 3200 }
   ]
 };
 
@@ -68,8 +80,8 @@ function resolveLanguageKey(lang) {
 }
 
 const LANGUAGES = {
-  hindi: DEMO_SEQUENCES.hindi[2],
-  marathi: DEMO_SEQUENCES.marathi[2],
+  hindi: DEMO_SEQUENCES.hindi[0],
+  marathi: DEMO_SEQUENCES.marathi[0],
   english: DEMO_SEQUENCES.english[0]
 };
 

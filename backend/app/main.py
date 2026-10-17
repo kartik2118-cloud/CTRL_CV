@@ -41,6 +41,7 @@ from app.models import (
 from app.session import SessionState
 from app.audio_utils import is_silence_chunk, deduplicate_seam, is_hallucination_text
 from app.providers.factory import get_stt_provider, get_translation_provider
+from app.preloaded import get_preloaded_segments
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
@@ -269,6 +270,51 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                     "Dropping chunk %d: chunk epoch %d != current session epoch %d",
                     meta.chunk_id, meta.epoch, session.epoch
                 )
+                return
+
+            # Aligned Preloaded Video Lyrics / Transcripts (e.g. dQw4w9WgXcQ, jNQXAC9IVRw)
+            effective_video_id = meta.video_id or session.video_id
+            preloaded_segments = get_preloaded_segments(
+                effective_video_id,
+                meta.video_start,
+                duration=meta.duration,
+                target_lang=session.target_lang
+            )
+            if preloaded_segments:
+                for seg in preloaded_segments:
+                    if not session.is_valid_epoch(meta.epoch):
+                        return
+                    trans_text = seg.get("translation")
+                    if not trans_text and session.target_lang and session.target_lang.lower() != session.lang.lower():
+                        try:
+                            trans_text = await call_translation_with_resilience(
+                                seg["text"], session.lang, session.target_lang
+                            )
+                        except Exception as e:
+                            logger.error("Preloaded translation error: %s", e)
+                            trans_text = None
+
+                    sub_res = SubtitleResult(
+                        chunk_id=meta.chunk_id,
+                        epoch=meta.epoch,
+                        start=seg["start"],
+                        end=seg["end"],
+                        lang=session.lang,
+                        text=seg["text"],
+                        translation=trans_text,
+                        source="preloaded",
+                        is_final=True,
+                        revision=1,
+                        start_offset=0.0,
+                        end_offset=round(meta.duration, 3),
+                        langs=[session.lang]
+                    )
+                    if session.client_protocol == "contract":
+                        res_dict = sub_res.model_dump()
+                        res_dict["type"] = "result"
+                        await safe_send(json.dumps(res_dict))
+                    else:
+                        await safe_send(sub_res.model_dump_json())
                 return
 
             # Task 7: VAD / Silence Energy Gate (Never send silent chunks to cloud STT)
@@ -501,6 +547,8 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                     session.target_lang = hello.target_lang
                     if hello.client_id:
                         session.session_id = hello.client_id
+                    if hello.video_id:
+                        session.video_id = hello.video_id
 
                     ack = HelloAckMessage(session_id=session.session_id, epoch=session.epoch)
                     await safe_send(ack.model_dump_json())
@@ -511,6 +559,8 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                     session.session_id = data.get("session_id", session.session_id)
                     session.lang = data.get("lang_hint") or data.get("lang") or session.lang
                     session.target_lang = data.get("translate_to") or data.get("target_lang") or session.target_lang
+                    if data.get("video_id"):
+                        session.video_id = data.get("video_id")
                     await safe_send(json.dumps({"type": "ready"}))
 
                 # ── Protocol Message: chunk_meta ──
@@ -521,6 +571,9 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                         err = ErrorMessage(code="VALIDATION_ERROR", detail=str(ve), message="Invalid chunk_meta payload")
                         await safe_send(err.model_dump_json())
                         continue
+
+                    if meta.video_id:
+                        session.video_id = meta.video_id
 
                     if not session.is_valid_epoch(meta.epoch):
                         logger.info(
@@ -539,16 +592,21 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                         rate = float(data.get("playback_rate", 1.0))
                         cid = int(data.get("chunk_id", 0))
                         ep = int(data.get("epoch", session.epoch))
+                        vid = data.get("video_id")
                         meta = ChunkMetaMessage(
                             chunk_id=cid,
                             video_start=v_start,
                             playback_rate=rate,
-                            epoch=ep
+                            epoch=ep,
+                            video_id=vid
                         )
                     except Exception as ve:
                         err = ErrorMessage(code="VALIDATION_ERROR", detail=str(ve), message="Invalid chunk payload")
                         await safe_send(err.model_dump_json())
                         continue
+
+                    if vid:
+                        session.video_id = vid
 
                     # If client protocol is contract, adopt higher epoch automatically (e.g. initial epoch 1 or seek increment)
                     if session.client_protocol == "contract" and (ep > session.epoch or session.epoch == 0):
@@ -573,6 +631,9 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                         err = ErrorMessage(code="VALIDATION_ERROR", detail=str(ve), message="Invalid seek payload")
                         await safe_send(err.model_dump_json())
                         continue
+
+                    if seek_msg.video_id:
+                        session.video_id = seek_msg.video_id
 
                     # Advances epoch and cancels pending in-flight tasks
                     new_epoch = session.handle_seek(new_epoch=seek_msg.epoch)

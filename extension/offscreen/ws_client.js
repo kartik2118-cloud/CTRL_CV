@@ -58,7 +58,7 @@
       this.playbackRate = typeof options.initialPlaybackRate === 'number' ? options.initialPlaybackRate : 1.0;
       this.latestAnchor = null;
       this.currentChunkVideoStartTime = null;
-      this.currentVideoId = null;
+      this.currentVideoId = options.videoId || null;
       this._lastAdState = null;
 
       this.partialBuffer = [];
@@ -149,7 +149,8 @@
             type: 'hello',
             client_id: this.sessionId,
             lang: (this.lang === 'auto' || !this.lang) ? 'auto' : this.lang,
-            target_lang: (this.targetLang && this.targetLang !== 'none') ? this.targetLang : null
+            target_lang: (this.targetLang && this.targetLang !== 'none') ? this.targetLang : null,
+            video_id: this.currentVideoId || null
           };
           try {
             this.ws.send(JSON.stringify(helloMsg));
@@ -319,7 +320,8 @@
       const seekMsg = {
         type: 'seek',
         video_time: Number(vTime.toFixed(3)),
-        epoch: this.epoch
+        epoch: this.epoch,
+        video_id: this.currentVideoId || null
       };
 
       if (this.ws && this.ws.readyState === 1 && this.isHandshakeComplete) {
@@ -485,7 +487,8 @@
         video_start: vStartTime,
         playback_rate: currentRate,
         sample_rate: this.sampleRate,
-        duration: Number(chunkDurationS.toFixed(3))
+        duration: Number(chunkDurationS.toFixed(3)),
+        video_id: this.currentVideoId || null
       };
 
       const chunkSentEvent = {
