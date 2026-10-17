@@ -69,6 +69,11 @@ class WhisperSTTProvider(STTProvider):
 
         async with httpx.AsyncClient(timeout=PROVIDER_TIMEOUT_SECONDS) as client:
             response = await client.post(self.endpoint, headers=headers, data=data, files=files)
+            if response.status_code == 429 and "groq.com" in self.endpoint:
+                alternate_model = "whisper-large-v3" if self.model == "whisper-large-v3-turbo" else "whisper-large-v3-turbo"
+                data["model"] = alternate_model
+                response = await client.post(self.endpoint, headers=headers, data=data, files=files)
+
             if response.status_code != 200:
                 raise RuntimeError(f"Whisper STT API error (HTTP {response.status_code}): {response.text}")
 
