@@ -303,12 +303,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'START_OFFSCREEN_CAPTURE') {
-    startCapture(message.streamId, message.targetTabId).then(sendResponse);
+    startCapture(message.streamId, message.targetTabId)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: err.message || String(err) }));
     return true;
   }
 
   if (message.type === 'STOP_OFFSCREEN_CAPTURE') {
-    stopCapture().then(sendResponse);
+    stopCapture()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: err.message || String(err) }));
     return true;
   }
 

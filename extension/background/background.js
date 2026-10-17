@@ -64,7 +64,7 @@ async function closeOffscreenDocumentSafely() {
   }
 }
 
-async function sendMessageToOffscreenWithRetry(message, maxAttempts = 10, intervalMs = 60) {
+async function sendMessageToOffscreenWithRetry(message, maxAttempts = 25, intervalMs = 100) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const resp = await chrome.runtime.sendMessage(message);
@@ -75,8 +75,8 @@ async function sendMessageToOffscreenWithRetry(message, maxAttempts = 10, interv
       if (attempt === maxAttempts) {
         throw err;
       }
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
   throw new Error('No response received from offscreen document');
 }
