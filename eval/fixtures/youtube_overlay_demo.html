@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>YouTube Subtitle Overlay - Interactive Testbed</title>
+  <link rel="stylesheet" href="../../extension/overlay.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #38bdf8;
+      margin-bottom: 8px;
+    }
+    p {
+      color: #94a3b8;
+      font-size: 13px;
+      margin-top: 0;
+      margin-bottom: 20px;
+    }
+    /* Simulated YouTube Video Player Container */
+    #movie_player {
+      position: relative;
+      width: 800px;
+      height: 450px;
+      background: #000000;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 1px 1px rgba(255, 255, 255, 0.1);
+    }
+    canvas#videoCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    /* Simulated YouTube Bottom Chrome Bar */
+    .ytp-chrome-bottom {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 48px;
+      background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      box-sizing: border-box;
+      gap: 12px;
+      z-index: 20;
+    }
+    .yt-btn {
+      background: transparent;
+      border: none;
+      color: #ffffff;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.15);
+      font-weight: 500;
+    }
+    .yt-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+    .yt-time {
+      font-size: 12px;
+      color: #e2e8f0;
+      font-family: monospace;
+    }
+    /* Testbed Control Dashboard */
+    .controls-panel {
+      width: 800px;
+      margin-top: 20px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px;
+      box-sizing: border-box;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .btn-action {
+      background: #0284c7;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .btn-action:hover {
+      background: #0369a1;
+    }
+    .btn-secondary {
+      background: #334155;
+      color: #cbd5e1;
+      border: 1px solid #475569;
+    }
+    .btn-secondary:hover {
+      background: #475569;
+      color: #ffffff;
+    }
+    .badge {
+      background: #065f46;
+      color: #34d399;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <h1>YouTube Subtitle Overlay - Interactive Testbed</h1>
+  <p>Simulates the exact YouTube video player DOM (#movie_player) with the live glassmorphic subtitle overlay.</p>
+
+  <!-- Simulated YouTube Player Container -->
+  <div id="movie_player" class="html5-video-player">
+    <canvas id="videoCanvas" width="800" height="450"></canvas>
+    
+    <!-- Hidden actual video element for time tracking -->
+    <video id="simulatedVideo" class="html5-main-video" style="display: none;"></video>
+
+    <!-- Simulated YouTube Bottom Controls Bar -->
+    <div class="ytp-chrome-bottom">
+      <button class="yt-btn" id="btn-player-play">❚❚ Pause</button>
+      <span class="yt-time" id="player-time">00:00 / 05:00</span>
+      <button class="yt-btn" id="btn-player-speed">1.0x</button>
+    </div>
+  </div>
+
+  <!-- Testbed Interactive Dashboard -->
+  <div class="controls-panel">
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <span class="badge" id="testbed-status">SIMULATOR ACTIVE</span>
+      <span style="font-size: 12px; color: #94a3b8;">Rate: <strong id="rate-disp" style="color: #f1f5f9;">1.0x</strong></span>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-action" id="btn-trigger-demo">Trigger Live Subtitles</button>
+      <button class="btn-action btn-secondary" id="btn-seek-fwd">Seek Forward (+5s)</button>
+      <button class="btn-action btn-secondary" id="btn-seek-back">Seek Backward (-5s)</button>
+      <button class="btn-action btn-secondary" id="btn-toggle-speed">Speed (1x/1.5x/2x)</button>
+    </div>
+  </div>
+
+  <!-- Load Extension Content Script -->
+  <script src="../../extension/content.js"></script>
+
+  <script>
+    // Canvas animation generating synthetic video frames with timestamp
+    const canvas = document.getElementById('videoCanvas');
+    const ctx = canvas.getContext('2d');
+    const simulatedVideo = document.getElementById('simulatedVideo');
+    const playerTime = document.getElementById('player-time');
+    const btnPlayerPlay = document.getElementById('btn-player-play');
+    const btnPlayerSpeed = document.getElementById('btn-player-speed');
+    const rateDisp = document.getElementById('rate-disp');
+
+    let currentTime = 0.0;
+    let playbackRate = 1.0;
+    let isPaused = false;
+    let lastAnimTime = performance.now();
+
+    // Mock video properties on simulatedVideo
+    Object.defineProperty(simulatedVideo, 'currentTime', {
+      get: () => currentTime,
+      set: (v) => { currentTime = Math.max(0, v); }
+    });
+    Object.defineProperty(simulatedVideo, 'playbackRate', {
+      get: () => playbackRate,
+      set: (r) => { playbackRate = r; }
+    });
+    Object.defineProperty(simulatedVideo, 'paused', {
+      get: () => isPaused,
+      set: (p) => { isPaused = p; }
+    });
+    Object.defineProperty(simulatedVideo, 'seeking', {
+      get: () => false
+    });
+
+    function renderFrame(now) {
+      const dt = (now - lastAnimTime) / 1000.0;
+      lastAnimTime = now;
+
+      if (!isPaused) {
+        currentTime += dt * playbackRate;
+      }
+
+      // Draw synthetic video background
+      const grad = ctx.createLinearGradient(0, 0, 800, 450);
+      const hue = Math.floor((currentTime * 20) % 360);
+      grad.addColorStop(0, `hsl(${hue}, 40%, 15%)`);
+      grad.addColorStop(1, `hsl(${(hue + 60) % 360}, 50%, 8%)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 800, 450);
+
+      // Draw subtle grid
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < 800; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, 450);
+        ctx.stroke();
+      }
+
+      // Draw animated video content
+      ctx.fillStyle = "#38bdf8";
+      ctx.font = "bold 24px -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Simulated YouTube Video Stream", 400, 160);
+
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "16px monospace";
+      const mins = Math.floor(currentTime / 60).toString().padStart(2, '0');
+      const secs = (currentTime % 60).toFixed(1).padStart(4, '0');
+      ctx.fillText(`Video Clock: ${mins}:${secs} | Rate: ${playbackRate.toFixed(1)}x`, 400, 200);
+
+      playerTime.textContent = `${mins}:${Math.floor(currentTime % 60).toString().padStart(2, '0')} / 05:00`;
+
+      requestAnimationFrame(renderFrame);
+    }
+    requestAnimationFrame(renderFrame);
+
+    // Initial Subtitle Demo Generation
+    setTimeout(() => {
+      if (typeof generateDemoCues === 'function') {
+        generateDemoCues(currentTime);
+      }
+    }, 400);
+
+    // Controls
+    document.getElementById('btn-trigger-demo').addEventListener('click', () => {
+      if (typeof generateDemoCues === 'function') {
+        generateDemoCues(currentTime);
+      }
+    });
+
+    document.getElementById('btn-seek-fwd').addEventListener('click', () => {
+      currentTime += 5.0;
+      if (typeof handleDiscontinuity === 'function') handleDiscontinuity('seeked');
+    });
+
+    document.getElementById('btn-seek-back').addEventListener('click', () => {
+      currentTime = Math.max(0, currentTime - 5.0);
+      if (typeof handleDiscontinuity === 'function') handleDiscontinuity('seeked');
+    });
+
+    const rates = [1.0, 1.5, 2.0];
+    let rateIdx = 0;
+    function cycleRate() {
+      rateIdx = (rateIdx + 1) % rates.length;
+      playbackRate = rates[rateIdx];
+      btnPlayerSpeed.textContent = `${playbackRate.toFixed(1)}x`;
+      rateDisp.textContent = `${playbackRate.toFixed(1)}x`;
+      if (typeof handleDiscontinuity === 'function') handleDiscontinuity('ratechange');
+    }
+    document.getElementById('btn-toggle-speed').addEventListener('click', cycleRate);
+    btnPlayerSpeed.addEventListener('click', cycleRate);
+
+    btnPlayerPlay.addEventListener('click', () => {
+      isPaused = !isPaused;
+      btnPlayerPlay.textContent = isPaused ? "▶ Play" : "❚❚ Pause";
+      if (typeof handleDiscontinuity === 'function') handleDiscontinuity(isPaused ? 'pause' : 'playing');
+    });
+  </script>
+</body>
+</html>

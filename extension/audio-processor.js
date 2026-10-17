@@ -104,7 +104,13 @@ class AudioChunkProcessor extends AudioWorkletProcessor {
     const durationS = sampleCount / this.targetRate;
     const byteLength = sampleCount * 4; // Float32: 4 bytes per sample
 
-    // Post metadata only (never raw PCM samples)
+    // Convert to Int16 PCM for streaming
+    const pcm16 = new Int16Array(sampleCount);
+    for (let i = 0; i < sampleCount; i++) {
+      const s = Math.max(-1.0, Math.min(1.0, this.chunkBuffer[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+
     this.port.postMessage({
       type: 'CHUNK_DIAGNOSTIC',
       epoch: this.epoch,
@@ -118,8 +124,9 @@ class AudioChunkProcessor extends AudioWorkletProcessor {
       rms: parseFloat(rms.toFixed(6)),
       peak: parseFloat(peak.toFixed(6)),
       is_final_partial: isFinalPartial,
-      wall_time_ms: Date.now()
-    });
+      wall_time_ms: Date.now(),
+      pcm_buffer: pcm16.buffer
+    }, [pcm16.buffer]);
 
     this.chunkWriteIdx = 0;
   }

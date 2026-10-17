@@ -30,7 +30,7 @@ let currentAppStatus = { status: 'Idle', message: '' };
 
 function broadcastStatus(status, message = '') {
   currentAppStatus = { status, message };
-  chrome.runtime.sendMessage({ type: 'STATUS', status, message }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'STATUS', status, message }).catch(() => { });
 }
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen/offscreen.html';
@@ -203,7 +203,7 @@ registerHandler('STOP_CAPTURE', (msg, sender, sendResponse) => {
 
 registerHandler('STATUS', (msg) => {
   currentAppStatus = { status: msg.status || 'Idle', message: msg.message || '' };
-  chrome.runtime.sendMessage({ type: 'STATUS', ...currentAppStatus }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'STATUS', ...currentAppStatus }).catch(() => { });
 });
 
 registerHandler('GET_STATUS', (msg, sender, sendResponse) => {
@@ -221,21 +221,6 @@ registerHandler('EXPORT_DIAGNOSTICS', (msg, sender, sendResponse) => {
     .then(sendResponse)
     .catch(err => sendResponse({ success: false, error: err.message }));
   return true;
-});
-
-// Stage 2 Routing: offscreen -> background -> content
-registerHandler('CHUNK_SENT', (msg) => {
-  const tabId = msg.targetTabId || (captureSession && captureSession.targetTabId);
-  if (tabId) {
-    chrome.tabs.sendMessage(tabId, msg).catch(() => {});
-  }
-});
-
-registerHandler('RESULT', (msg) => {
-  const tabId = msg.targetTabId || (captureSession && captureSession.targetTabId);
-  if (tabId) {
-    chrome.tabs.sendMessage(tabId, msg).catch(() => {});
-  }
 });
 
 // Primary Message Dispatcher

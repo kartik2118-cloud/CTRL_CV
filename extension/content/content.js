@@ -561,6 +561,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
     switch (message.action) {
       case 'SHOW_SUBTITLE':
       case 'RENDER_SUBTITLE': {
+        if (syncBridgeInstance && message.result) {
+          syncBridgeInstance.handleResult(message.result, message.ctx);
+        }
         const ok = showSubtitle({
           text: message.text || '',
           translation: message.translation || '',
@@ -624,8 +627,35 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
         sendResponse({
           currentVideoId,
           isAttached: !!overlayHostEl,
-          currentStyle: { ...currentStyle }
+          currentStyle: { ...currentStyle },
+          hasBridge: !!syncBridgeInstance
         });
+        return false;
+      }
+
+      case 'EXPORT_CUE_LOG': {
+        const cues = syncBridgeInstance ? syncBridgeInstance.exportLog() : [];
+        const archive = syncBridgeInstance ? syncBridgeInstance.exportArchive() : [];
+        sendResponse({
+          status: 'ok',
+          cues,
+          archive,
+          count: cues.length
+        });
+        return false;
+      }
+
+      case 'STT_RESULT':
+      case 'RESULT_FRAME': {
+        if (syncBridgeInstance && message.result) {
+          syncBridgeInstance.handleResult(message.result, message.ctx);
+        } else if (message.text) {
+          showSubtitle({
+            text: message.text,
+            translation: message.translation || ''
+          });
+        }
+        sendResponse({ status: 'processed' });
         return false;
       }
 
@@ -635,6 +665,45 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
   });
 }
 
+// ─── Role D: SyncBridge Lifecycle Wiring ──────────────────────────────────────
+let syncBridgeInstance = null;
+
+function setupSyncBridge() {
+  if (syncBridgeInstance) return;
+  const video = getCurrentVideoElement();
+  if (!video || typeof globalThis.CtrlCVSync === 'undefined') return;
+
+  const { SyncBridge } = globalThis.CtrlCVSync;
+  if (!SyncBridge) return;
+
+  try {
+    syncBridgeInstance = new SyncBridge({
+      video,
+      tickMs: 50,
+      minHold: 2.0,
+      render: (visibleCues) => {
+        if (visibleCues && visibleCues.length > 0) {
+          const top = visibleCues[0];
+          showSubtitle({
+            text: top.text || '',
+            translation: top.translation || ''
+          });
+        } else {
+          clearSubtitle();
+        }
+      }
+    });
+
+    window.__ctrlcvExportCueLog = () => (syncBridgeInstance ? syncBridgeInstance.exportLog() : []);
+    window.__ctrlcvExportArchive = () => (syncBridgeInstance ? syncBridgeInstance.exportArchive() : []);
+    window.__ctrlcvGetBridge = () => syncBridgeInstance;
+
+    console.log('[LiveSub Content] SyncBridge initialized with HTML5 video timeline.');
+  } catch (err) {
+    console.warn('[LiveSub Content] SyncBridge setup error:', err);
+  }
+}
+
 // ─── Setup & Player Replacement ───────────────────────────────────────────────
 function initAll() {
   const player = document.querySelector(PLAYER_SELECTOR);
@@ -642,6 +711,7 @@ function initAll() {
     attachOverlay(player);
     attachControls(player);
     currentVideoId = getVideoIdFromUrl();
+    setupSyncBridge();
     return true;
   }
   return false;
@@ -670,6 +740,7 @@ function observePlayerReplacement() {
       rowTransEl = null;
       controlsEl = null;
       playerElement = null;
+      syncBridgeInstance = null;
       initAll();
     }
   });
@@ -683,3 +754,4 @@ if (!initAll()) {
 }
 observePlayerReplacement();
 initSpaNavigationListeners();
+

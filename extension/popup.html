@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveSub</title>
+  <style>
+    body {
+      width: 290px;
+      margin: 0;
+      padding: 14px 16px;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #121316;
+      color: #e4e7eb;
+      box-sizing: border-box;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #23272e;
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #ff3b3b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #23272e;
+      color: #8b949e;
+    }
+    .badge.active {
+      background: rgba(35, 134, 54, 0.25);
+      color: #3fb950;
+      border: 1px solid rgba(63, 185, 80, 0.4);
+    }
+    .btn-block {
+      display: block;
+      width: 100%;
+      padding: 9px 12px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .btn-capture {
+      background: #e50914;
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(229, 9, 20, 0.35);
+    }
+    .btn-capture:hover {
+      background: #f40612;
+      filter: brightness(1.1);
+    }
+    .btn-capture.stop {
+      background: #21262d;
+      color: #f85149;
+      border: 1px solid rgba(248, 81, 73, 0.4);
+      box-shadow: none;
+    }
+    .row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .row button {
+      flex: 1;
+      padding: 7px 8px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      background: #1c2128;
+      color: #c9d1d9;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .row button:hover {
+      background: #262c36;
+      color: #ffffff;
+    }
+    .btn-export {
+      background: #1c2128;
+      color: #58a6ff;
+      border: 1px solid rgba(88, 166, 255, 0.3);
+    }
+    .btn-export:hover {
+      background: rgba(88, 166, 255, 0.1);
+    }
+    .notice {
+      margin-top: 10px;
+      font-size: 10px;
+      line-height: 1.4;
+      color: #6e7681;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 6px 8px;
+      border-radius: 4px;
+      border-left: 2px solid #388bfd;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">🔴 LiveSub</div>
+    <span class="badge" id="capture-badge">IDLE</span>
+  </div>
+
+  <button class="btn-block btn-capture" id="btn-toggle-capture">▶ Start Live Subtitles</button>
+
+  <div class="row">
+    <button id="btn-demo">▶ Test Demo</button>
+    <button id="btn-clear">✕ Clear</button>
+  </div>
+
+  <button class="btn-block btn-export" id="btn-export-log">💾 Export Cue Log (JSON)</button>
+
+  <div class="notice">
+    🔒 Audio from this YouTube tab is captured and processed via your WebSocket server (<code style="color:#58a6ff;">ws://127.0.0.1:8000/ws</code>).
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

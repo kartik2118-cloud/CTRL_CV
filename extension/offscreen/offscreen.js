@@ -123,7 +123,7 @@ async function startCapture(streamId, targetTabId = null) {
     audioTracks[0].addEventListener('ended', () => {
       console.log('[Offscreen] Audio track ended unexpectedly.');
       stopCapture();
-      chrome.runtime.sendMessage({ type: 'OFFSCREEN_STREAM_ENDED' }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'OFFSCREEN_STREAM_ENDED' }).catch(() => { });
     });
 
     // 3. Setup AudioContext
@@ -147,21 +147,17 @@ async function startCapture(streamId, targetTabId = null) {
     await audioContext.audioWorklet.addModule(processorUrl);
     workletNode = new AudioWorkletNode(audioContext, 'audio-chunk-processor');
 
-    // Handle diagnostic metadata and PCM audio from AudioWorklet
+    // Handle diagnostic metadata from AudioWorklet
     workletNode.port.onmessage = (event) => {
-      if (!event.data) return;
-      if (event.data.type === 'CHUNK_AUDIO' || event.data.type === 'CHUNK_DIAGNOSTIC') {
+      if (event.data && event.data.type === 'CHUNK_DIAGNOSTIC') {
         recordDiagnostic(event.data);
-        if (event.data.pcm && wsClient && isCapturing) {
-          wsClient.feedAudioBlock(new Int16Array(event.data.pcm), event.data.audio_duration_s);
-        }
       }
     };
 
     // Initialize WsClient for backend streaming
     const WsClientClass = globalThis.WsClient || (typeof window !== 'undefined' && window.WsClient) || (typeof self !== 'undefined' && self.WsClient);
     if (WsClientClass) {
-      chrome.runtime.sendMessage({ type: 'STATUS', status: 'Connecting' }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'STATUS', status: 'Connecting' }).catch(() => { });
       wsClient = new WsClientClass({
         initialEpoch: currentEpoch,
         initialPlaybackRate: latestAnchor ? latestAnchor.playback_rate : 1.0,
@@ -172,22 +168,22 @@ async function startCapture(streamId, targetTabId = null) {
             chunk_id: chunkInfo.chunk_id,
             video_start_time: chunkInfo.video_start_time,
             playback_rate: chunkInfo.playback_rate
-          }).catch(() => {});
-          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Streaming' }).catch(() => {});
+          }).catch(() => { });
+          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Streaming' }).catch(() => { });
         },
         onResult: (result) => {
           chrome.runtime.sendMessage({
             type: 'RESULT',
             targetTabId: currentTargetTabId,
             result: result
-          }).catch(() => {});
+          }).catch(() => { });
         },
         onOpen: () => {
-          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Streaming' }).catch(() => {});
+          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Streaming' }).catch(() => { });
         },
         onError: (err) => {
           console.warn('[Offscreen WS] Error:', err);
-          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Error', message: err?.message || String(err) }).catch(() => {});
+          chrome.runtime.sendMessage({ type: 'STATUS', status: 'Error', message: err?.message || String(err) }).catch(() => { });
         }
       });
 
@@ -197,7 +193,7 @@ async function startCapture(streamId, targetTabId = null) {
 
       wsClient.connect().catch((err) => {
         console.warn('[Offscreen WS] Connect error (will retry or offline):', err);
-        chrome.runtime.sendMessage({ type: 'STATUS', status: 'Error', message: err?.message || String(err) }).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'STATUS', status: 'Error', message: err?.message || String(err) }).catch(() => { });
       });
     }
 
@@ -218,6 +214,60 @@ async function startCapture(streamId, targetTabId = null) {
     console.error('[Offscreen] Failed to start capture:', err);
     await stopCapture();
     return { success: false, error: err.message || String(err) };
+  }
+}
+
+let backendWs = null;
+const BACKEND_WS_URL = 'ws://127.0.0.1:8000/ws';
+
+function connectBackendWebSocket() {
+  if (backendWs && (backendWs.readyState === WebSocket.OPEN || backendWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  try {
+    backendWs = new WebSocket(BACKEND_WS_URL);
+    backendWs.binaryType = 'arraybuffer';
+
+    backendWs.onopen = () => {
+      console.log('[Offscreen WS] Connected to backend at', BACKEND_WS_URL);
+      backendWs.send(JSON.stringify({
+        type: 'start',
+        session_id: sessionId,
+        translate_to: 'en',
+        lang_hint: null,
+        dual: true
+      }));
+    };
+
+    backendWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'result' || msg.type === 'subtitle') {
+          // Offscreen documents do not have access to chrome.tabs API.
+          // Route subtitle to background service worker to forward to the active tab.
+          chrome.runtime.sendMessage({
+            action: 'FORWARD_SUBTITLE',
+            text: msg.text || '',
+            translation: msg.translation || '',
+            result: msg
+          }).catch(() => { });
+        }
+      } catch (e) {
+        console.warn('[Offscreen WS] Error parsing message:', e);
+      }
+    };
+
+    backendWs.onerror = (err) => {
+      console.warn('[Offscreen WS] WebSocket error:', err);
+    };
+
+    backendWs.onclose = () => {
+      console.log('[Offscreen WS] WebSocket closed.');
+      backendWs = null;
+    };
+  } catch (err) {
+    console.warn('[Offscreen WS] Could not connect to backend:', err);
   }
 }
 
@@ -261,14 +311,14 @@ async function stopCapture() {
     if (silentGain) {
       try {
         silentGain.disconnect();
-      } catch (e) {}
+      } catch (e) { }
       silentGain = null;
     }
 
     if (workletNode) {
       try {
         workletNode.disconnect();
-      } catch (e) {}
+      } catch (e) { }
       workletNode = null;
     }
 
@@ -291,6 +341,16 @@ async function stopCapture() {
         console.warn('[Offscreen] Error closing AudioContext:', e);
       }
       audioContext = null;
+    }
+
+    // 5. Close the WebSocket connection
+    if (backendWs) {
+      try {
+        if (backendWs.readyState === WebSocket.OPEN) {
+          backendWs.close();
+        }
+      } catch (_) { }
+      backendWs = null;
     }
 
     isCapturing = false;
