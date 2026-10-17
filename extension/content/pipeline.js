@@ -136,19 +136,30 @@
 
     sendVideoObservation(true);
     console.log('[CtrlCV Pipeline] SyncBridge mounted to video element.');
-    setTimeout(checkForManualCaptions, 400);
+    setTimeout(checkForCaptions, 400);
   }
 
-  async function checkForManualCaptions() {
+  async function checkForCaptions() {
     if (typeof globalThis.CtrlCVCaptions?.initCaptionPath === 'function' && bridge) {
       try {
+        const stored = await new Promise(r => {
+          if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+            chrome.storage.local.get(['source_lang', 'target_lang', 'livesub_active'], r);
+          } else {
+            r({});
+          }
+        });
         const res = await globalThis.CtrlCVCaptions.initCaptionPath({
           bridge,
-          video: activeVideoEl
+          video: activeVideoEl,
+          preferredLang: stored?.source_lang || 'auto',
+          targetLang: stored?.target_lang || 'none'
         });
         if (res && res.active) {
-          console.log(`[CtrlCV Pipeline] Manual caption track loaded (${res.count} cues). Tab audio capture stopped.`);
+          console.log(`[CtrlCV Pipeline] YouTube caption track loaded (${res.count} cues, lang: ${res.track?.languageCode}${res.translated ? ' translated' : ''}). Tab audio capture stopped.`);
           return true;
+        } else {
+          console.log('[CtrlCV Pipeline] No YouTube caption tracks for this video. Tab audio STT path ready.');
         }
       } catch (err) {
         console.warn('[CtrlCV Pipeline] Caption check error:', err);
@@ -193,7 +204,7 @@
     }
     sendVideoObservation(true);
     pollForVideo();
-    setTimeout(checkForManualCaptions, 400);
+    setTimeout(checkForCaptions, 400);
   });
 
   // 6. Ad Detection Observer
@@ -232,6 +243,11 @@
     if (!message) return false;
     const action = message.type || message.action;
 
+    if (action === 'UPDATE_LANGUAGES') {
+      setTimeout(checkForCaptions, 100);
+      return false;
+    }
+
     if (action === 'CHUNK_SENT') {
       if (typeof window.__livesubOnChunkSent === 'function') {
         window.__livesubOnChunkSent(message);
@@ -248,11 +264,11 @@
       return true;
     }
 
-    if (action === 'RESULT') {
+    if (action === 'RESULT' || action === 'RENDER_CUE' || action === 'CUE_RESULT') {
       if (typeof window.__livesubOnResult === 'function') {
         window.__livesubOnResult(message);
       }
-      const resultFrame = message.result || message;
+      const resultFrame = message.cue || message.result || message;
       if (bridge) {
         let overrideCtx = null;
         if (!bridge._chunkMetaMap?.has(resultFrame.chunk_id)) {

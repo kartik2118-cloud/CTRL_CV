@@ -34,13 +34,14 @@
   }
 
   /**
-   * Detects manual caption tracks from YouTube player data.
-   * Strictly filters out any auto-generated tracks (kind === 'asr' or vssId starting with 'a.').
+   * Detects all caption tracks (both manual and auto-generated ASR) from YouTube player data.
    * 
-   * @param {Object} [playerResponse] YouTube player response object (optional; queries DOM if omitted)
-   * @returns {Array<{ languageCode: string, name: string, kind: string, baseUrl?: string }>} List of manual tracks
+   * @param {Object} [playerResponse] YouTube player response object
+   * @param {Object} [options]
+   * @param {boolean} [options.includeAsr=true] Whether to include auto-generated (ASR) tracks
+   * @returns {Array<{ languageCode: string, name: string, kind: string, isAsr: boolean, baseUrl?: string }>} List of tracks
    */
-  function detectManualCaptionTracks(playerResponse = null) {
+  function detectCaptionTracks(playerResponse = null, { includeAsr = true } = {}) {
     let pr = playerResponse;
 
     if (!pr && typeof document !== 'undefined') {
@@ -72,34 +73,45 @@
       return [];
     }
 
-    const manualTracks = [];
+    const tracks = [];
 
     for (const t of captionTracks) {
       if (!t || typeof t !== 'object') continue;
 
       const rawKind = (t.kind || '').toLowerCase();
       const vssId = (t.vssId || '').toLowerCase();
-
-      // Rule: Ignore automatic speech recognition (kind=asr or vssId a.*)
       const isAsr = rawKind === 'asr' || vssId.startsWith('a.');
-      if (isAsr) {
+
+      if (isAsr && !includeAsr) {
         continue;
       }
 
-      const languageCode = (t.languageCode || t.vssId?.replace(/^\./, '') || 'en').toLowerCase();
+      const languageCode = (t.languageCode || t.vssId?.replace(/^\.?a?\./, '') || 'en').toLowerCase();
       const name = t.name?.simpleText || t.name?.runs?.[0]?.text || languageCode;
-      const kind = t.kind || 'manual';
+      const kind = isAsr ? 'asr' : (t.kind || 'manual');
       const baseUrl = t.baseUrl || '';
 
-      manualTracks.push({
+      tracks.push({
         languageCode,
         name,
         kind,
+        isAsr,
         baseUrl
       });
     }
 
-    return manualTracks;
+    return tracks;
+  }
+
+  /**
+   * Detects manual caption tracks from YouTube player data.
+   * Strictly filters out any auto-generated tracks (kind === 'asr' or vssId starting with 'a.').
+   * 
+   * @param {Object} [playerResponse] YouTube player response object (optional; queries DOM if omitted)
+   * @returns {Array<{ languageCode: string, name: string, kind: string, baseUrl?: string }>} List of manual tracks
+   */
+  function detectManualCaptionTracks(playerResponse = null) {
+    return detectCaptionTracks(playerResponse, { includeAsr: false });
   }
 
   /**
@@ -129,6 +141,46 @@
     }
 
     return manualTracks[0];
+  }
+
+  /**
+   * Selects the best caption track (prioritizing manual tracks, then auto-generated ASR tracks).
+   * 
+   * @param {Array<Object>} tracks
+   * @param {string} [preferredLang='auto']
+   * @returns {Object|null}
+   */
+  function chooseCaptionTrack(tracks, preferredLang = 'auto') {
+    if (!Array.isArray(tracks) || tracks.length === 0) {
+      return null;
+    }
+
+    const manualTracks = tracks.filter(t => !t.isAsr);
+    const asrTracks = tracks.filter(t => t.isAsr);
+
+    const normPref = (preferredLang || 'auto').toLowerCase().trim();
+
+    if (normPref && normPref !== 'auto' && normPref !== 'none') {
+      // 1. Manual match
+      const manualMatch = manualTracks.find(t => t.languageCode === normPref || t.languageCode.startsWith(normPref));
+      if (manualMatch) return manualMatch;
+      // 2. ASR match
+      const asrMatch = asrTracks.find(t => t.languageCode === normPref || t.languageCode.startsWith(normPref));
+      if (asrMatch) return asrMatch;
+    }
+
+    // Default priority: manual priority -> asr priority -> first manual -> first asr
+    const priority = ['hi', 'en', 'mr', 'ta', 'te'];
+    for (const p of priority) {
+      const m = manualTracks.find(t => t.languageCode === p || t.languageCode.startsWith(p));
+      if (m) return m;
+    }
+    for (const p of priority) {
+      const a = asrTracks.find(t => t.languageCode === p || t.languageCode.startsWith(p));
+      if (a) return a;
+    }
+
+    return manualTracks[0] || asrTracks[0] || tracks[0];
   }
 
   /**
@@ -290,42 +342,54 @@
 
   /**
    * Full caption path lifecycle coordinator.
-   * 1. Inspects player for manual caption tracks.
+   * 1. Inspects player for YouTube caption tracks (manual prioritized, then ASR).
    * 2. If present: stops audio capture & WebSocket, updates popup status to "Captions".
-   * 3. Fetches track text, parses into cues, and registers them in SyncBridge.
+   * 3. Fetches track text (with &tlang for target language translation if requested).
+   * 4. Parses into cues and registers them in SyncBridge.
    * 
    * @param {Object} options
    * @param {Object} options.bridge Active SyncBridge instance
    * @param {HTMLMediaElement} [options.video] HTML5 video element
    * @param {Function} [options.onStatus] Status callback
    * @param {string} [options.preferredLang='auto']
-   * @returns {Promise<{ active: boolean, track?: Object, count?: number, reason?: string }>}
+   * @param {string} [options.targetLang='none']
+   * @returns {Promise<{ active: boolean, track?: Object, count?: number, reason?: string, translated?: boolean }>}
    */
-  async function initCaptionPath({ bridge, video = null, onStatus = null, preferredLang = 'auto' } = {}) {
+  async function initCaptionPath({ bridge, video = null, onStatus = null, preferredLang = 'auto', targetLang = 'none' } = {}) {
     if (!bridge) {
       return { active: false, reason: 'no_bridge' };
     }
 
-    const manualTracks = detectManualCaptionTracks();
-    if (!manualTracks || manualTracks.length === 0) {
-      return { active: false, reason: 'no_manual_tracks' };
+    // Read stored language preference if not supplied
+    if ((preferredLang === 'auto' || targetLang === 'none') && typeof chrome !== 'undefined' && chrome.storage?.local) {
+      try {
+        const stored = await new Promise(r => chrome.storage.local.get(['source_lang', 'target_lang'], r));
+        if (preferredLang === 'auto' && stored?.source_lang) preferredLang = stored.source_lang;
+        if (targetLang === 'none' && stored?.target_lang) targetLang = stored.target_lang;
+      } catch (_) {}
     }
 
-    const chosenTrack = chooseManualCaptionTrack(manualTracks, preferredLang);
+    // 1. Detect all available tracks (manual + ASR)
+    const allTracks = detectCaptionTracks(null, { includeAsr: true });
+    if (!allTracks || allTracks.length === 0) {
+      return { active: false, reason: 'no_tracks' };
+    }
+
+    const chosenTrack = chooseCaptionTrack(allTracks, preferredLang);
     if (!chosenTrack || !chosenTrack.baseUrl) {
       return { active: false, reason: 'no_track_url' };
     }
 
-    console.log(`[CtrlCV Captions] Found manual caption track: ${chosenTrack.name} (${chosenTrack.languageCode}). Switching to caption path.`);
+    console.log(`[CtrlCV Captions] Found YouTube caption track: ${chosenTrack.name} (${chosenTrack.languageCode}, kind=${chosenTrack.kind}).`);
 
-    // Rule 4: STOP audio capture and WebSocket (no audio leaves browser), broadcast status "Captions"
+    // STOP audio capture & WS when using YouTube captions
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({ action: 'STOP_CAPTURE' }).catch(() => {});
         chrome.runtime.sendMessage({
           type: 'STATUS',
           status: 'Captions',
-          message: `Manual captions active (${chosenTrack.languageCode})`,
+          message: `YouTube captions active (${chosenTrack.languageCode}${targetLang && targetLang !== 'none' ? ' -> ' + targetLang : ''})`,
           capture_state: 'idle',
           ws_state: 'captions',
           source: 'captions'
@@ -334,20 +398,38 @@
     } catch (_) {}
 
     if (typeof onStatus === 'function') {
-      onStatus('Captions', `Manual captions active (${chosenTrack.languageCode})`);
+      onStatus('Captions', `YouTube captions active (${chosenTrack.languageCode})`);
     }
 
-    // Fetch caption text
+    // 2. Fetch with multilingual translation if targetLang differs
     let rawText = '';
-    try {
-      const resp = await fetch(chosenTrack.baseUrl);
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
+    let isTranslated = false;
+    const shouldTranslate = targetLang && targetLang !== 'none' && targetLang !== 'auto' && targetLang.toLowerCase() !== chosenTrack.languageCode.toLowerCase();
+
+    if (shouldTranslate) {
+      const transUrl = `${chosenTrack.baseUrl}&tlang=${encodeURIComponent(targetLang)}`;
+      try {
+        const resp = await fetch(transUrl);
+        if (resp.ok) {
+          const tText = await resp.text();
+          if (tText && (tText.includes('<text') || tText.includes('"events"'))) {
+            rawText = tText;
+            isTranslated = true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fall back to original baseUrl if translation not requested or failed
+    if (!rawText) {
+      try {
+        const resp = await fetch(chosenTrack.baseUrl);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        rawText = await resp.text();
+      } catch (fetchErr) {
+        console.warn('[CtrlCV Captions] Failed to fetch caption track:', fetchErr);
+        return { active: false, reason: 'fetch_failed', error: fetchErr.message };
       }
-      rawText = await resp.text();
-    } catch (fetchErr) {
-      console.warn('[CtrlCV Captions] Failed to fetch caption track:', fetchErr);
-      return { active: false, reason: 'fetch_failed', error: fetchErr.message };
     }
 
     const cues = parseCaptionText(rawText);
@@ -355,19 +437,27 @@
       return { active: false, reason: 'empty_cues' };
     }
 
-    const count = feedCuesToSyncBridge(cues, bridge, chosenTrack);
-    console.log(`[CtrlCV Captions] Successfully ingested ${count} manual cues into SyncBridge.`);
+    // Ingest cues into SyncBridge
+    const trackForBridge = {
+      ...chosenTrack,
+      languageCode: isTranslated ? targetLang : chosenTrack.languageCode
+    };
+    const count = feedCuesToSyncBridge(cues, bridge, trackForBridge);
+    console.log(`[CtrlCV Captions] Ingested ${count} cues into SyncBridge (lang: ${trackForBridge.languageCode}).`);
 
     return {
       active: true,
-      track: chosenTrack,
-      count
+      track: trackForBridge,
+      count,
+      translated: isTranslated
     };
   }
 
   const exportObj = {
     decodeHtmlEntities,
+    detectCaptionTracks,
     detectManualCaptionTracks,
+    chooseCaptionTrack,
     chooseManualCaptionTrack,
     parseCaptionXml,
     parseCaptionJson,
@@ -378,6 +468,15 @@
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exportObj;
+    module.exports.detectCaptionTracks = detectCaptionTracks;
+    module.exports.detectManualCaptionTracks = detectManualCaptionTracks;
+    module.exports.chooseCaptionTrack = chooseCaptionTrack;
+    module.exports.chooseManualCaptionTrack = chooseManualCaptionTrack;
+    module.exports.parseCaptionXml = parseCaptionXml;
+    module.exports.parseCaptionJson = parseCaptionJson;
+    module.exports.parseCaptionText = parseCaptionText;
+    module.exports.feedCuesToSyncBridge = feedCuesToSyncBridge;
+    module.exports.initCaptionPath = initCaptionPath;
   }
   if (typeof globalThis !== 'undefined') {
     globalThis.CtrlCVCaptions = exportObj;

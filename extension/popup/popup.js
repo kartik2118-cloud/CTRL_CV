@@ -184,6 +184,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, () => {
       if (chrome.runtime.lastError) {}
     });
+    sendToActiveTab({
+      action: 'UPDATE_LANGUAGES',
+      source_lang: sourceLangSelect.value,
+      target_lang: targetLangSelect?.value
+    });
   });
 
   targetLangSelect?.addEventListener('change', async () => {
@@ -195,6 +200,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       target_lang: targetLangSelect.value
     }, () => {
       if (chrome.runtime.lastError) {}
+    });
+    sendToActiveTab({
+      action: 'UPDATE_LANGUAGES',
+      source_lang: sourceLangSelect?.value,
+      target_lang: targetLangSelect.value
     });
   });
 
@@ -237,7 +247,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (tab?.id) {
         chrome.runtime.sendMessage({
           action: 'START_CAPTURE',
-          targetTabId: tab.id
+          type: 'START_CAPTURE',
+          tabId: tab.id,
+          targetTabId: tab.id,
+          config: {
+            wsUrl: effectiveUrl,
+            sourceLanguage: sourceLangSelect?.value || 'auto',
+            targetLanguage: targetLangSelect?.value || 'none'
+          }
         }, (startResp) => {
           if (chrome.runtime.lastError) {
             const err = chrome.runtime.lastError.message;
