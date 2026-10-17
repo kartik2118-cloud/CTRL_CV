@@ -39,7 +39,12 @@ from app.models import (
     ErrorMessage,
 )
 from app.session import SessionState
-from app.audio_utils import is_silence_chunk, deduplicate_seam, is_hallucination_text
+from app.audio_utils import (
+    is_silence_chunk,
+    deduplicate_seam,
+    is_hallucination_text,
+    detect_script_code_mixed,
+)
 from app.providers.factory import get_stt_provider, get_translation_provider
 
 logging.basicConfig(
@@ -314,6 +319,14 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                 if not seg_text:
                     continue
 
+                # Language detection and session locking (Role C / docs/C_PATCH.md)
+                detected_iso = getattr(seg, "lang", None) or session.lang
+                if detected_iso and detected_iso != "auto":
+                    session.record_detected_lang(detected_iso)
+
+                # Script-share code-mixed analysis (preserving detected_iso e.g. 'mr', 'hi', etc.)
+                langs_list = detect_script_code_mixed(seg_text, dominant_lang=detected_iso)
+
                 # Task 7: Filter hallucination text
                 if FILTER_HALLUCINATIONS and is_hallucination_text(seg_text):
                     logger.debug("Dropping hallucination segment: '%s'", seg_text)
@@ -357,15 +370,15 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                     epoch=meta.epoch,
                     start=t_start,
                     end=t_end,
-                    lang=session.lang,
+                    lang=detected_iso,
+                    langs=langs_list,
                     text=clean_text,
                     translation=translation,
                     source="stt",
                     is_final=True,
                     revision=1,
-                    start_offset=seg.offset_start,
-                    end_offset=seg.offset_end,
-                    langs=[session.lang]
+                    start_offset=round(seg.offset_start, 3),
+                    end_offset=round(seg.offset_end, 3),
                 )
 
                 # Emit result frame for docs/contract.md or subtitle frame for LiveSub extension

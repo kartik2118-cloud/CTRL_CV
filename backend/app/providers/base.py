@@ -12,6 +12,7 @@ class STTResult(BaseModel):
     offset_end: float
     text: str
     confidence: float = 1.0
+    lang: Optional[str] = None
 
 
 class STTProvider(ABC):

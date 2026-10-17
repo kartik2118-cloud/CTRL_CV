@@ -1,6 +1,7 @@
+from collections import Counter
 import uuid
 import time
-from typing import Optional
+from typing import Optional, List
 from app.models import ChunkMetaMessage
 
 
@@ -15,6 +16,7 @@ class SessionState:
         self.session_id: str = client_id or str(uuid.uuid4())
         self.epoch: int = 0
         self.playback_rate: float = 1.0
+        self.requested_lang: str = lang
         self.lang: str = lang
         self.target_lang: Optional[str] = target_lang
         self.pending_meta: Optional[ChunkMetaMessage] = None
@@ -23,9 +25,28 @@ class SessionState:
         self.chunk_timestamps: list[float] = []
         self.in_flight_tasks: set = set()
         self.client_protocol: str = "default"
+        self.is_auto_lang: bool = (not lang) or (lang.lower() == "auto")
+        self.auto_lang_samples: List[str] = []
+        self.lang_locked: bool = False
 
     def touch(self):
         self.last_active_time = time.time()
+
+    def record_detected_lang(self, detected_lang: Optional[str]) -> Optional[str]:
+        """
+        Collects auto-detected language for the first 3 chunks.
+        Locks session language to the majority vote after 3 samples.
+        Before lock is achieved, self.lang remains 'auto' so Whisper continues native detection.
+        """
+        if not self.is_auto_lang or self.lang_locked or not detected_lang:
+            return self.lang
+
+        self.auto_lang_samples.append(detected_lang)
+        if len(self.auto_lang_samples) >= 3:
+            majority_lang = Counter(self.auto_lang_samples).most_common(1)[0][0]
+            self.lang = majority_lang
+            self.lang_locked = True
+        return self.lang
 
     def check_rate_limit(self, max_per_second: float = 5.0) -> bool:
         """
@@ -50,6 +71,12 @@ class SessionState:
             self.epoch += 1
         # Clear any pending chunk meta from the pre-seek period
         self.pending_meta = None
+
+        # Reset language lock and auto-detect history on epoch bump
+        if self.is_auto_lang:
+            self.lang_locked = False
+            self.auto_lang_samples = []
+            self.lang = self.requested_lang
 
         # Cancel in-flight tasks for old epoch
         for task in list(self.in_flight_tasks):

@@ -119,3 +119,40 @@ def deduplicate_seam(prev_text: str, curr_text: str) -> str:
         return " ".join(remaining)
 
     return curr_text.strip()
+
+
+def detect_script_code_mixed(text: str, dominant_lang: str = "en") -> list[str]:
+    """
+    Calculates character script shares for Indic vs Latin.
+    If both Indic and Latin shares are >= 0.20, returns [dominant_lang, 'en'].
+    Preserves dominant_lang from Whisper ISO (including Marathi 'mr').
+    """
+    if not text:
+        return [dominant_lang]
+
+    indic_letters = 0
+    latin_letters = 0
+    total_letters = 0
+
+    for ch in text:
+        cp = ord(ch)
+        # Devanagari, Tamil, Telugu Unicode ranges
+        if (0x0900 <= cp <= 0x097F) or (0x0B80 <= cp <= 0x0BFF) or (0x0C00 <= cp <= 0x0C7F):
+            indic_letters += 1
+            total_letters += 1
+        elif (0x0041 <= cp <= 0x005A) or (0x0061 <= cp <= 0x007A):
+            latin_letters += 1
+            total_letters += 1
+
+    if total_letters == 0:
+        return [dominant_lang]
+
+    indic_share = indic_letters / total_letters
+    latin_share = latin_letters / total_letters
+
+    if indic_share >= 0.20 and latin_share >= 0.20:
+        if dominant_lang == "en":
+            return ["en", "hi"]
+        return [dominant_lang, "en"]
+
+    return [dominant_lang]
