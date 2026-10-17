@@ -16,10 +16,12 @@ const OVERLAY_HOST_ID = 'livesub-overlay-host';
 const CONTROLS_PANEL_ID = 'livesub-controls-panel';
 const PLAYER_SELECTOR = '#movie_player, .html5-video-player, ytd-player, #shorts-player, ytd-shorts';
 
-function getPlayerElement() {
-  return document.querySelector(PLAYER_SELECTOR) ||
-         document.querySelector('video')?.parentElement ||
-         document.body;
+function getPlayerElement(allowBodyFallback = false) {
+  const player = document.querySelector(PLAYER_SELECTOR);
+  if (player) return player;
+  const videoParent = document.querySelector('video')?.parentElement;
+  if (videoParent) return videoParent;
+  return allowBodyFallback ? document.body : null;
 }
 
 const POLL_INTERVAL_MS = 400;
@@ -204,7 +206,7 @@ function getShadowStyles() {
 // ─── Renderer API (Phase 4 Contract) ──────────────────────────────────────────
 function showSubtitle({ text = '', translation = '', lang = '' } = {}) {
   if (!rowSourceEl || !rowTransEl || !overlayHostEl || !overlayHostEl.isConnected) {
-    initAll();
+    initAll(true);
   }
   if (!rowSourceEl || !rowTransEl) return false;
 
@@ -314,6 +316,12 @@ function updateStyle({ fontSize, color, position } = {}) {
 // ─── Overlay Mount (Idempotent) ───────────────────────────────────────────────
 function attachOverlay(player) {
   if (!player) return false;
+
+  // Clean up any orphan overlay host that is not inside player
+  const orphan = document.getElementById(OVERLAY_HOST_ID);
+  if (orphan && !player.contains(orphan)) {
+    orphan.remove();
+  }
 
   const isBody = player === document.body;
   const existing = player.querySelector(`#${OVERLAY_HOST_ID}`);
@@ -748,8 +756,10 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
 
       case 'GET_STATUS': {
         sendResponse({
+          version: '0.1.1',
+          build: 10,
           currentVideoId,
-          isAttached: !!overlayHostEl,
+          isAttached: !!overlayHostEl && overlayHostEl.isConnected,
           currentStyle: { ...currentStyle }
         });
         return false;
@@ -762,8 +772,8 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
 }
 
 // ─── Setup & Player Replacement ───────────────────────────────────────────────
-function initAll() {
-  const player = getPlayerElement();
+function initAll(allowBodyFallback = false) {
+  const player = getPlayerElement(allowBodyFallback);
   if (player) {
     attachOverlay(player);
     if (player !== document.body) {

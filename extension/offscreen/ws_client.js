@@ -205,6 +205,11 @@
           } catch (_) {}
           this._pendingSeek = null;
         }
+
+        // Flush any chunk that became ready while awaiting handshake
+        if (this.bufferedSamples >= this.targetChunkSamples) {
+          this.flushChunk(false);
+        }
         return;
       }
 
@@ -271,6 +276,7 @@
         epoch: typeof msg.epoch === 'number' ? msg.epoch : this.epoch,
         start: start,
         end: end,
+        video_start_time: vStart,
         start_offset: startOffset,
         end_offset: endOffset,
         playback_rate: playbackRate,
@@ -437,7 +443,9 @@
       this.bufferedSamples += pcm.length;
 
       if (this.bufferedSamples >= this.targetChunkSamples) {
-        this.flushChunk(false);
+        if (!this.ws || this.isHandshakeComplete) {
+          this.flushChunk(false);
+        }
       }
     }
 
@@ -495,6 +503,9 @@
       this.sentChunks.set(chunkId, chunkSentEvent);
 
       if (this.ws && this.ws.readyState === 1) {
+        if (!this.isHandshakeComplete) {
+          return null;
+        }
         try {
           this.ws.send(JSON.stringify(header));
           this.ws.send(merged.buffer);

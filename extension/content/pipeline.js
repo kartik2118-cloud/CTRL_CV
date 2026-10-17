@@ -229,10 +229,15 @@
       const resultFrame = message.result || message;
       if (bridge) {
         let overrideCtx = null;
-        if (!bridge._chunkMetaMap?.has(resultFrame.chunk_id) && typeof resultFrame.start === 'number' && typeof resultFrame.start_offset === 'number') {
+        if (!bridge._chunkMetaMap?.has(resultFrame.chunk_id)) {
           const rate = resultFrame.playback_rate || 1.0;
+          const vStart = (typeof resultFrame.video_start_time === 'number')
+            ? resultFrame.video_start_time
+            : (typeof resultFrame.start === 'number' && typeof resultFrame.start_offset === 'number')
+              ? Number((resultFrame.start - resultFrame.start_offset * rate).toFixed(6))
+              : (activeVideoEl?.currentTime || 0.0);
           overrideCtx = {
-            video_start_time: Number((resultFrame.start - resultFrame.start_offset * rate).toFixed(6)),
+            video_start_time: vStart,
             playback_rate: rate
           };
         }

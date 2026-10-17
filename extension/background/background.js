@@ -87,10 +87,12 @@ async function sendMessageToOffscreenWithRetry(message, maxAttempts = 25, interv
   throw new Error('No response received from offscreen document');
 }
 
+const CURRENT_CONTENT_BUILD = 10;
+
 async function ensureContentScript(tabId) {
   try {
     const ping = await chrome.tabs.sendMessage(tabId, { action: 'GET_STATUS' });
-    if (ping && ping.isAttached !== undefined) return;
+    if (ping && ping.isAttached !== undefined && ping.build === CURRENT_CONTENT_BUILD) return;
   } catch (_) {}
 
   try {
@@ -107,7 +109,7 @@ async function ensureContentScript(tabId) {
           'content/content.js'
         ]
       });
-      console.log(`[LiveSub BG] Injected content scripts into tab ${tabId}`);
+      console.log(`[LiveSub BG] Injected content scripts (build ${CURRENT_CONTENT_BUILD}) into tab ${tabId}`);
     }
   } catch (err) {
     console.warn(`[LiveSub BG] Script injection fallback skipped:`, err?.message || err);
@@ -264,6 +266,11 @@ registerHandler('RESULT', (msg) => {
   if (tabId) {
     chrome.tabs.sendMessage(tabId, msg).catch(() => {});
   }
+});
+
+registerHandler('OFFSCREEN_STREAM_ENDED', async () => {
+  console.log('[LiveSub BG] Received OFFSCREEN_STREAM_ENDED. Cleaning up capture session.');
+  await handleStopCapture();
 });
 
 // Primary Message Dispatcher
