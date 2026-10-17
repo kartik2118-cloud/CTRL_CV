@@ -31,20 +31,79 @@ document.addEventListener('DOMContentLoaded', async () => {
   const toggleText = document.getElementById('toggle-state-text');
   const urlInput = document.getElementById('backend-url');
   const urlFeedback = document.getElementById('url-feedback');
+  const statusIndicator = document.getElementById('status-indicator');
+  const statusText = document.getElementById('status-text');
+  const sourceLangSelect = document.getElementById('source-lang');
+  const targetLangSelect = document.getElementById('target-lang');
 
   const defaultPlaceholder = (typeof DEFAULT_WS_URL !== 'undefined') ? DEFAULT_WS_URL : 'wss://REPLACE_ME/ws';
   if (urlInput) {
     urlInput.placeholder = defaultPlaceholder;
   }
 
-  // Load configured backend URL and active state
-  chrome.storage.local.get(['backend_url', 'livesub_active'], (items) => {
+  function setStatus(status, message = '') {
+    if (!statusText || !statusIndicator) return;
+    const normalized = status || 'Idle';
+    statusIndicator.className = 'status-indicator ' + normalized.toLowerCase();
+    if (normalized === 'Error' && message) {
+      statusText.textContent = `Error: ${message}`;
+      statusText.title = message;
+    } else if (normalized === 'Connecting') {
+      statusText.textContent = message || 'Connecting...';
+      statusText.title = '';
+    } else if (normalized === 'Streaming') {
+      statusText.textContent = 'Streaming';
+      statusText.title = '';
+    } else {
+      statusText.textContent = 'Idle';
+      statusText.title = '';
+    }
+  }
+
+  // Load configured backend URL, language options, and active state (default: OFF)
+  chrome.storage.local.get(['backend_url', 'livesub_active', 'source_lang', 'target_lang'], (items) => {
     if (items.backend_url) {
       urlInput.value = items.backend_url;
     }
-    const isActive = items.livesub_active !== false; // Default: true
+    const isActive = items.livesub_active === true; // Default: false (OFF)
     toggleInput.checked = isActive;
     updateToggleLabel(isActive);
+
+    if (sourceLangSelect && items.source_lang) {
+      sourceLangSelect.value = items.source_lang;
+    }
+    if (targetLangSelect && items.target_lang !== undefined) {
+      targetLangSelect.value = items.target_lang;
+    }
+  });
+
+  // Query background status
+  try {
+    chrome.runtime.sendMessage({ action: 'GET_STATUS' }, (resp) => {
+      if (chrome.runtime.lastError || !resp) {
+        setStatus('Idle');
+      } else {
+        setStatus(resp.status, resp.message);
+      }
+    });
+  } catch (_) {
+    setStatus('Idle');
+  }
+
+  // Real-time status update listener
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && (msg.type === 'STATUS' || msg.action === 'STATUS')) {
+      setStatus(msg.status, msg.message);
+    }
+  });
+
+  // Language selectors change listeners
+  sourceLangSelect?.addEventListener('change', async () => {
+    await chrome.storage.local.set({ source_lang: sourceLangSelect.value });
+  });
+
+  targetLangSelect?.addEventListener('change', async () => {
+    await chrome.storage.local.set({ target_lang: targetLangSelect.value });
   });
 
   function updateToggleLabel(active) {
@@ -68,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isActive) {
       // ON: Start capture session for active tab & unhide overlay
+      setStatus('Connecting', 'Initializing capture...');
       if (tab?.id) {
         chrome.runtime.sendMessage({
           action: 'START_CAPTURE',
@@ -80,6 +140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } else {
       // OFF: Close socket, stop capture, hide overlay
+      setStatus('Idle', '');
       chrome.runtime.sendMessage({ action: 'STOP_CAPTURE' }).catch(() => {});
       if (tab?.id) {
         chrome.tabs.sendMessage(tab.id, { action: 'CLEAR_SUBTITLE' }).catch(() => {});

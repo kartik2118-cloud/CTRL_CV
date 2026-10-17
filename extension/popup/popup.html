@@ -182,6 +182,71 @@
       flex: 1;
       padding: 7px 6px;
     }
+    /* Status Section */
+    .status-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #27272a;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #71717a;
+      flex-shrink: 0;
+    }
+    .status-indicator.connecting { background: #eab308; }
+    .status-indicator.streaming { background: #22c55e; }
+    .status-indicator.error { background: #ef4444; }
+    .status-text {
+      font-weight: 500;
+      color: #d4d4d8;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Language Options */
+    .lang-section {
+      background: #27272a;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+    .lang-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .lang-row:last-child {
+      margin-bottom: 0;
+    }
+    .lang-row label {
+      font-size: 11px;
+      color: #a1a1aa;
+      font-weight: 500;
+    }
+    .lang-row select {
+      background: #18181b;
+      color: #f4f4f5;
+      border: 1px solid #3f3f46;
+      border-radius: 4px;
+      padding: 4px 6px;
+      font-size: 11px;
+      outline: none;
+      cursor: pointer;
+    }
+    .lang-row select:focus {
+      border-color: #ef4444;
+    }
+
+    /* Note */
     .note {
       font-size: 10px;
       color: #71717a;
@@ -200,15 +265,47 @@
     <strong>Cloud Audio Notice:</strong> Audio from this tab is streamed to a cloud speech recognition service for live transcription and translation.
   </div>
 
+  <!-- Status Bar -->
+  <div class="status-section">
+    <span class="status-indicator" id="status-indicator"></span>
+    <span class="status-text" id="status-text">Idle</span>
+  </div>
+
   <!-- ON/OFF Switch -->
   <div class="toggle-section">
     <div class="toggle-label">Live Streaming & Subtitles</div>
     <div class="switch-container">
-      <span class="switch-state-text" id="toggle-state-text">ON</span>
+      <span class="switch-state-text" id="toggle-state-text">OFF</span>
       <label class="switch">
-        <input type="checkbox" id="toggle-active" checked>
+        <input type="checkbox" id="toggle-active">
         <span class="slider"></span>
       </label>
+    </div>
+  </div>
+
+  <!-- Language Selection -->
+  <div class="lang-section">
+    <div class="lang-row">
+      <label for="source-lang">Spoken Language</label>
+      <select id="source-lang">
+        <option value="auto">Auto-detect</option>
+        <option value="hi">Hindi (hi)</option>
+        <option value="mr">Marathi (mr)</option>
+        <option value="ta">Tamil (ta)</option>
+        <option value="te">Telugu (te)</option>
+        <option value="en">English (en)</option>
+      </select>
+    </div>
+    <div class="lang-row">
+      <label for="target-lang">Translate To</label>
+      <select id="target-lang">
+        <option value="none">None (Single Subtitle)</option>
+        <option value="en">English (en)</option>
+        <option value="hi">Hindi (hi)</option>
+        <option value="mr">Marathi (mr)</option>
+        <option value="ta">Tamil (ta)</option>
+        <option value="te">Telugu (te)</option>
+      </select>
     </div>
   </div>
 

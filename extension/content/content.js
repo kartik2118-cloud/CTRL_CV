@@ -47,6 +47,7 @@ const DEMO_CUE = LANGUAGES['english'];
 let overlayHostEl = null;
 let shadowRootEl = null;
 let subtitleBoxEl = null;
+let rowLangEl = null;
 let rowSourceEl = null;
 let rowTransEl = null;
 let controlsEl = null;
@@ -156,6 +157,22 @@ function getShadowStyles() {
       color: #ffe082;
     }
 
+    .sub-lang-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: rgba(239, 68, 68, 0.88);
+      color: #ffffff;
+      margin-bottom: 4px;
+      width: fit-content;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    }
+
+    .sub-lang-badge[data-empty="true"],
     .sub-row[data-empty="true"] {
       display: none !important;
     }
@@ -163,11 +180,17 @@ function getShadowStyles() {
 }
 
 // ─── Renderer API (Phase 4 Contract) ──────────────────────────────────────────
-function showSubtitle({ text = '', translation = '' } = {}) {
+function showSubtitle({ text = '', translation = '', lang = '' } = {}) {
   if (!rowSourceEl || !rowTransEl) return false;
 
   const cleanText = (text || '').trim();
   const cleanTrans = (translation || '').trim();
+  const cleanLang = (lang || '').trim();
+
+  if (rowLangEl) {
+    rowLangEl.textContent = cleanLang;
+    rowLangEl.setAttribute('data-empty', cleanLang === '' ? 'true' : 'false');
+  }
 
   rowSourceEl.textContent = cleanText;
   rowSourceEl.setAttribute('data-empty', cleanText === '' ? 'true' : 'false');
@@ -179,7 +202,7 @@ function showSubtitle({ text = '', translation = '' } = {}) {
 }
 
 function clearSubtitle() {
-  showSubtitle({ text: '', translation: '' });
+  showSubtitle({ text: '', translation: '', lang: '' });
 }
 
 // Expose render callbacks on window for pipeline.js
@@ -240,6 +263,11 @@ function attachOverlay(player) {
   box.style.setProperty('--livesub-font-size', `${currentStyle.fontSize}px`);
   box.style.setProperty('--livesub-color', currentStyle.color);
 
+  const langBadge = document.createElement('span');
+  langBadge.className = 'sub-lang-badge';
+  langBadge.setAttribute('data-empty', 'true');
+  box.appendChild(langBadge);
+
   const source = document.createElement('span');
   source.className = 'sub-row source';
   source.setAttribute('data-empty', 'true');
@@ -256,6 +284,7 @@ function attachOverlay(player) {
   overlayHostEl = host;
   shadowRootEl = shadow;
   subtitleBoxEl = box;
+  rowLangEl = langBadge;
   rowSourceEl = source;
   rowTransEl = trans;
   playerElement = player;
@@ -534,7 +563,8 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       case 'RENDER_SUBTITLE': {
         const ok = showSubtitle({
           text: message.text || '',
-          translation: message.translation || ''
+          translation: message.translation || '',
+          lang: message.lang || ''
         });
         sendResponse({
           status: ok ? 'rendered' : 'player_not_attached',
@@ -543,7 +573,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
           currentTime,
           renderTimestamp: performance.now()
         });
-        return false;
+        return true;
       }
 
       case 'CLEAR_SUBTITLE': {
@@ -552,7 +582,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
           status: 'cleared',
           currentTime
         });
-        return false;
+        return true;
       }
 
       case 'SET_ENABLED': {
@@ -566,7 +596,15 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
           status: 'ok',
           enabled: message.enabled
         });
-        return false;
+        return true;
+      }
+
+      case 'EXPORT_CUE_LOG': {
+        const cueLog = (typeof window.__ctrlcvExportCueLog === 'function')
+          ? window.__ctrlcvExportCueLog(false)
+          : [];
+        sendResponse({ success: true, cueLog });
+        return true;
       }
 
       case 'UPDATE_STYLE': {

@@ -26,6 +26,12 @@ function registerHandler(action, fn) {
 // ─── Role B: Tab Audio Capture & Offscreen Management ─────────────────────────
 let captureSession = null; // { targetTabId: number, state: 'idle' | 'starting' | 'capturing' | 'stopping' }
 let creatingOffscreenPromise = null;
+let currentAppStatus = { status: 'Idle', message: '' };
+
+function broadcastStatus(status, message = '') {
+  currentAppStatus = { status, message };
+  chrome.runtime.sendMessage({ type: 'STATUS', status, message }).catch(() => {});
+}
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen/offscreen.html';
 
@@ -130,6 +136,7 @@ async function handleStartCapture(targetTabId) {
     }
 
     captureSession.state = 'capturing';
+    broadcastStatus('Streaming', 'Active');
     console.log(`[LiveSub BG] Successfully started tabCapture for tab ${targetTabId}`);
     return {
       success: true,
@@ -139,6 +146,7 @@ async function handleStartCapture(targetTabId) {
   } catch (err) {
     console.error('[LiveSub BG] Failed to start capture:', err);
     captureSession = null;
+    broadcastStatus('Error', err.message || String(err));
     await closeOffscreenDocumentSafely();
     return {
       success: false,
@@ -148,6 +156,7 @@ async function handleStartCapture(targetTabId) {
 }
 
 async function handleStopCapture() {
+  broadcastStatus('Idle', '');
   if (!captureSession && !(await chrome.offscreen.hasDocument())) {
     return { success: true, message: 'Capture not running' };
   }
@@ -182,6 +191,7 @@ registerHandler('START_CAPTURE', (msg, sender, sendResponse) => {
     sendResponse({ success: false, error: 'targetTabId is required' });
     return true;
   }
+  broadcastStatus('Connecting', 'Initializing capture...');
   handleStartCapture(tabId).then(sendResponse);
   return true;
 });
@@ -191,18 +201,17 @@ registerHandler('STOP_CAPTURE', (msg, sender, sendResponse) => {
   return true;
 });
 
+registerHandler('STATUS', (msg) => {
+  currentAppStatus = { status: msg.status || 'Idle', message: msg.message || '' };
+  chrome.runtime.sendMessage({ type: 'STATUS', ...currentAppStatus }).catch(() => {});
+});
+
 registerHandler('GET_STATUS', (msg, sender, sendResponse) => {
-  chrome.offscreen.hasDocument().then(hasDoc => {
-    if (!hasDoc) {
-      sendResponse({
-        isCapturing: false,
-        captureSession: null
-      });
-      return;
-    }
-    chrome.runtime.sendMessage({ target: 'offscreen', type: 'GET_OFFSCREEN_STATUS' })
-      .then(resp => sendResponse({ isCapturing: !!captureSession, captureSession, offscreen: resp }))
-      .catch(() => sendResponse({ isCapturing: !!captureSession, captureSession }));
+  sendResponse({
+    status: currentAppStatus.status,
+    message: currentAppStatus.message,
+    isCapturing: !!captureSession,
+    captureSession
   });
   return true;
 });

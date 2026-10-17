@@ -82,10 +82,13 @@
     } else {
       const combinedText = visibleCues.map(c => c.text).filter(Boolean).join('\n');
       const combinedTrans = visibleCues.map(c => c.translation).filter(Boolean).join('\n');
+      const allLangs = [...new Set(visibleCues.flatMap(c => c._langs || (Array.isArray(c.langs) ? c.langs : [c.lang])).filter(Boolean))];
+      const langBadge = allLangs.length > 1 ? allLangs.join(' / ').toUpperCase() : (allLangs[0] ? allLangs[0].toUpperCase() : '');
       if (typeof window.__livesubRenderSubtitle === 'function') {
         window.__livesubRenderSubtitle({
           text: combinedText,
-          translation: combinedTrans
+          translation: combinedTrans,
+          lang: langBadge
         });
       }
     }
@@ -207,18 +210,26 @@
       } else {
         sendResponse({ status: 'dropped', reason: 'bridge_not_ready' });
       }
-      return false;
+      return true;
     }
 
     if (action === 'RESULT') {
       const resultFrame = message.result || message;
       if (bridge) {
-        const outcome = bridge.handleResult(resultFrame);
+        let overrideCtx = null;
+        if (!bridge._chunkMetaMap?.has(resultFrame.chunk_id) && typeof resultFrame.start === 'number' && typeof resultFrame.start_offset === 'number') {
+          const rate = resultFrame.playback_rate || 1.0;
+          overrideCtx = {
+            video_start_time: Number((resultFrame.start - resultFrame.start_offset * rate).toFixed(6)),
+            playback_rate: rate
+          };
+        }
+        const outcome = bridge.handleResult(resultFrame, overrideCtx);
         sendResponse(outcome);
       } else {
         sendResponse({ status: 'dropped', reason: 'bridge_not_ready' });
       }
-      return false;
+      return true;
     }
 
     // 7. Judge Export Message Handler
@@ -226,7 +237,7 @@
       const cueLog = bridge ? bridge.exportLog() : [];
       const archive = bridge ? bridge.exportArchive() : [];
       sendResponse({ success: true, cueLog, archive });
-      return false;
+      return true;
     }
 
     return false;

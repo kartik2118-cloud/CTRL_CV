@@ -95,6 +95,26 @@
     }
 
     /**
+     * Resolves language preferences from storage if available.
+     * @returns {Promise<void>}
+     */
+    async resolveLanguages() {
+      if (this.storage && typeof this.storage.get === 'function') {
+        try {
+          const stored = await new Promise((resolve) => {
+            this.storage.get(['source_lang', 'target_lang'], resolve);
+          });
+          if (stored?.source_lang) {
+            this.lang = stored.source_lang;
+          }
+          if (stored?.target_lang !== undefined) {
+            this.targetLang = (stored.target_lang === 'none' ? null : stored.target_lang);
+          }
+        } catch (_) {}
+      }
+    }
+
+    /**
      * Establishes WebSocket connection and initiates "hello" handshake.
      * @returns {Promise<Object>} The connected WebSocket instance
      */
@@ -107,6 +127,7 @@
       }
 
       this._closedManually = false;
+      await this.resolveLanguages();
       const targetUrl = await this.resolveUrl();
 
       return new Promise((resolve, reject) => {
@@ -122,8 +143,8 @@
           const helloMsg = {
             type: 'hello',
             client_id: this.sessionId,
-            lang: this.lang,
-            target_lang: this.targetLang
+            lang: (this.lang === 'auto' || !this.lang) ? 'auto' : this.lang,
+            target_lang: (this.targetLang && this.targetLang !== 'none') ? this.targetLang : null
           };
           try {
             this.ws.send(JSON.stringify(helloMsg));
@@ -511,4 +532,7 @@
     module.exports = { WsClient };
   }
   root.WsClient = WsClient;
+  if (typeof globalThis !== 'undefined') globalThis.WsClient = WsClient;
+  if (typeof window !== 'undefined') window.WsClient = WsClient;
+  if (typeof self !== 'undefined') self.WsClient = WsClient;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
