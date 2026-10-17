@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LiveSub",
   "version": "0.1.0",
-  "description": "Live subtitles overlay for YouTube — hackathon build.",
+  "description": "Live subtitles overlay for YouTube - hackathon build.",
 
   "icons": {
     "16":  "icons/icon16.png",
@@ -20,7 +20,8 @@
   ],
 
   "host_permissions": [
-    "https://www.youtube.com/*"
+    "*://*.youtube.com/*",
+    "http://127.0.0.1:*/*"
   ],
 
   "background": {
@@ -30,14 +31,14 @@
 
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js":  [
+      "matches": ["*://*.youtube.com/*"],
+      "js": [
         "vendor/syncEngine.browser.js",
         "content/caption_path.js",
         "content/pipeline.js",
         "content/content.js"
       ],
-      "css": ["content/content.css"],
+      "css": ["content/content.css", "content/overlay.css"],
       "run_at": "document_idle",
       "all_frames": false
     }
@@ -59,10 +60,12 @@
         "offscreen/audio-processor.js",
         "offscreen/ws_client.js",
         "vendor/syncEngine.browser.js",
-        "content/caption_path.js"
+        "content/caption_path.js",
+        "content/content.css",
+        "content/overlay.css"
       ],
       "matches": [
-        "https://www.youtube.com/*"
+        "*://*.youtube.com/*"
       ]
     }
   ]

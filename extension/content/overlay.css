@@ -1,0 +1,129 @@
+/* overlay.css - Subtitle Container & HUD Styling */
+
+#livesub-root-container {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  pointer-events: none;
+  width: 90%;
+  max-width: 900px;
+  text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
+  transition: bottom 0.2s ease, opacity 0.2s ease;
+}
+
+/* Adjust when YouTube controls are active */
+.ytp-autohide #livesub-root-container {
+  bottom: 30px;
+}
+
+.livesub-card {
+  display: inline-block;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 10px 22px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: livesub-pop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes livesub-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Native Script Top Row */
+.livesub-row-native {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 17px;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.livesub-lang-badge {
+  display: inline-block;
+  background: #38bdf8;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.livesub-text-native {
+  color: #f1f5f9;
+  font-weight: 500;
+}
+
+/* Translation Bottom Row */
+.livesub-row-trans {
+  color: #38bdf8;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* Source badge for captions vs STT */
+.livesub-source-badge {
+  font-size: 10px;
+  color: #64748b;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Minimalist HUD badge at top-left */
+#livesub-hud-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2147483647;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-family: monospace;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.livesub-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e; /* Green */
+  box-shadow: 0 0 8px #22c55e;
+}
+
+.livesub-dot.connecting {
+  background: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
+}
+
+.livesub-dot.inactive {
+  background: #94a3b8;
+  box-shadow: none;
+}

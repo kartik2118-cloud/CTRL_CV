@@ -93,10 +93,10 @@ async function startCapture(tabId, config = {}, existingStreamId = null) {
     console.log('[LiveSub Background] Using stream ID:', streamId);
 
     // Read stored preferences if not supplied in config
-    const stored = await chrome.storage.local.get(['backend_url', 'source_lang', 'target_lang']);
-    const effectiveWsUrl = config?.wsUrl || stored.backend_url || 'ws://127.0.0.1:8000/ws';
-    const effectiveSource = config?.sourceLanguage || stored.source_lang || 'auto';
-    const effectiveTarget = config?.targetLanguage || stored.target_lang || 'none';
+    const stored = await chrome.storage.local.get(['backend_url', 'source_lang', 'target_lang', 'wsUrl', 'sourceLang', 'targetLang']);
+    const effectiveWsUrl = config?.wsUrl || stored.wsUrl || stored.backend_url || 'ws://127.0.0.1:8000/ws';
+    const effectiveSource = config?.sourceLanguage || config?.source_lang || stored.sourceLang || stored.source_lang || 'auto';
+    const effectiveTarget = config?.targetLanguage || config?.target_lang || stored.targetLang || stored.target_lang || 'none';
 
     // 2. Send to offscreen document with retry
     const offscreenRes = await sendToOffscreenWithRetry({
